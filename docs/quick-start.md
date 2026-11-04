@@ -21,6 +21,14 @@ The example normalizes three nodes and two connections, uses Lattice's shared
 mesh builders, composes Halo's scene/HUD runtime, and starts the render loop.
 It uses synthetic data and makes no business-service requests.
 
+The compact graph summary sits at the upper left; navigation Help opens at the
+upper right on desktop. Click or tap a labeled node to see its details below the
+summary. The bottom toolbar offers FIT (frame all nodes while preserving the view
+angle), RESET (restore the front view and stop movement), HELP, and TOOLS (debug
+and system log). Diagnostics start hidden. Narrow screens stack the panels and
+start with Help collapsed; shorter screens scroll panel content to keep the graph
+and toolbar accessible. Resizing reframes the graph for the available space.
+
 ## Install a versioned package in another application
 
 ```sh
