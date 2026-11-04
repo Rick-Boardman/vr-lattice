@@ -29,6 +29,11 @@ and system log). Diagnostics start hidden. Narrow screens stack the panels and
 start with Help collapsed; shorter screens scroll panel content to keep the graph
 and toolbar accessible. Resizing reframes the graph for the available space.
 
+For text-defined diagrams, start with [Mermaid flowcharts in 3D](mermaid.md).
+It covers raw flowchart text, fenced Markdown, flat/spherical card rendering,
+camera framing, controller APIs, and the precise supported subset. The graph
+demo above does not parse Mermaid or exercise the Mermaid renderer.
+
 ## Install a versioned package in another application
 
 ```sh

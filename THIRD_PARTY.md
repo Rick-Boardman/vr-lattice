@@ -31,5 +31,8 @@ integrity hashes, and license identifiers are recorded in package-lock.json.
 
 Dagre and Graphlib copyright/license texts are preserved in [LICENSES](LICENSES/).
 The browser build copies the installed Dagre ESM bundle without modification.
-Documentation artwork was supplied by the project owner and is included as
-project documentation under Apache-2.0; it is illustrative, not a runtime asset.
+The hero artwork was supplied by the project owner and is included as project
+documentation under Apache-2.0; it is illustrative, not a runtime asset.
+`docs/assets/Mermaid_Flow.png` is a browser screenshot generated from this
+project's documented Mermaid scene example and is included as project
+documentation under Apache-2.0.

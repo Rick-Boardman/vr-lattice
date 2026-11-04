@@ -34,6 +34,41 @@ HTTPS outside localhost and a compatible browser/device.
 Applications own execution, persistence, integrations, and domain rules. Lattice
 visualizes workflow structures; it does not execute workflows or connect databases.
 
+## Mermaid diagrams
+
+Turn Mermaid flowchart text into a navigable 3D diagram. Lattice can parse a
+supported flowchart subset, extract the first Mermaid block from Markdown, lay out
+the connections, and render labeled cards on a flat or spherical surface. Halo
+supplies desktop, touch, and WebXR navigation; your application supplies controls
+and selection behavior. This is useful for exploring architecture diagrams,
+process flows, and diagrams written by developers or AI agents.
+
+```js
+import { parseMermaidFlowchart, renderMermaidFlowchart3d } from "@rb/lattice/mermaid";
+
+const parsed = parseMermaidFlowchart(`flowchart LR
+  Input[Source data] --> Check{Valid?}
+  Check -->|Yes| Output[Result]
+  Check -->|No| Review(Review)
+`);
+// Use your application's Three.js instance and scene.
+const diagram = renderMermaidFlowchart3d({ THREE, parent: scene, parsed });
+diagram.setLayoutMode("sphere"); // or "flat"
+// In your frame loop: diagram.update(dt).
+// When removing the diagram: diagram.dispose().
+```
+
+Support is deliberately narrower than Mermaid itself: `flowchart TB`, `TD`, and
+`LR`, common node declarations, labeled links, and simple chains. The renderer
+uses Lattice's card presentation and shape-based accent colors. Mermaid themes,
+subgraphs, other diagram families, and exact Mermaid shape reproduction are not
+provided by this adapter.
+
+See the **[Mermaid guide](docs/mermaid.md)** for the syntax matrix, Markdown
+loading, complete scene integration, layout behavior, picking, and limitations.
+The included three-sphere demo demonstrates graph primitives; the guide's
+Mermaid example uses the separate card-based renderer.
+
 ## Installation and releases
 
 Download the versioned package and checksum from
@@ -64,6 +99,7 @@ Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 ## Documentation
 
 - [Quick start](docs/quick-start.md)
+- [Mermaid flowcharts in 3D](docs/mermaid.md)
 - [Graph layout](src/graph/application-style-layout.md)
 - [Scene effects](src/graph/scene-effects.md)
 - [Browser distribution](docs/browser-distribution.md)
