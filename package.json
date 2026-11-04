@@ -1,0 +1,62 @@
+{
+  "name": "@rb/lattice",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/check-relative-imports.mjs && node --test tests/*.test.mjs && node scripts/build-browser.mjs",
+    "start": "node scripts/serve.mjs",
+    "test:browser": "node scripts/test-browser.mjs",
+    "audit:release": "node scripts/audit-release.mjs",
+    "pack:deliverable": "node scripts/pack-deliverable.mjs"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "3.0.0"
+  },
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "author": "Richard Boardman",
+  "description": "Graph and Mermaid visualization for desktop, touch, and WebXR, built on Halo.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rick-Boardman/vr-lattice.git"
+  },
+  "homepage": "https://github.com/Rick-Boardman/vr-lattice#readme",
+  "bugs": {
+    "url": "https://github.com/Rick-Boardman/vr-lattice/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "npm@11.17.0",
+  "files": [
+    "src",
+    "docs",
+    "examples",
+    "README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY.md",
+    "LICENSES"
+  ],
+  "exports": {
+    ".": "./src/graph/index.js",
+    "./graph": "./src/graph/index.js",
+    "./mermaid": "./src/mermaid/index.js",
+    "./package.json": "./package.json",
+    "./src/*": "./src/*"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "@rb/halo": "https://github.com/Rick-Boardman/vr-halo/releases/download/v0.2.0/rb-halo-0.2.0.tgz",
+    "three": "0.160.1",
+    "troika-three-text": "0.52.4"
+  },
+  "peerDependencies": {
+    "@rb/halo": "0.2.0",
+    "three": "0.160.1",
+    "troika-three-text": "^0.52.4"
+  }
+}
