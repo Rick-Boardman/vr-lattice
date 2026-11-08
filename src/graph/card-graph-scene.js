@@ -1428,10 +1428,12 @@ export function createCardGraphScene({
       depthWrite: false,
     }));
     line.frustumCulled = false;
-    line.renderOrder = EDGE_PREVIEW_RENDER_ORDER;
-    arrow.renderOrder = EDGE_PREVIEW_RENDER_ORDER;
-    root.add(line);
-    root.add(arrow);
+    // three sorts by group first and each node is its own group: only a group of its own draws this over the nodes.
+    const group = new THREE.Group();
+    group.renderOrder = EDGE_PREVIEW_RENDER_ORDER;
+    group.add(line);
+    group.add(arrow);
+    root.add(group);
     edgePreview = { line, arrow };
     return edgePreview;
   }
