@@ -182,3 +182,17 @@ export { createNetworkPulseEffect } from "../network-pulse.js";
  * Side effects: none in this barrel; side effects occur when callers invoke the re-exported force-layout helpers.
  */
 export { relaxSpringRepelLayout, buildSpringList } from "../force-layout.js";
+
+/**
+ * Purpose: Re-export the shared business board look, connection model and line preview used by Conduit, Loom and Insight.
+ */
+export {
+  BUSINESS_BOARD_HUD_THEME,
+  BUSINESS_BOARD_SCENE_ACCESSORS,
+  BUSINESS_BOARD_SCENE_STYLE,
+  BUSINESS_HOTBAR_SLOT_COLORS,
+  BUSINESS_PANEL_COLORS,
+  createBoardEdgePreview,
+  resolveBusinessHotbarStatusColor,
+} from "./business-board.js";
+export { BUSINESS_ICON_PATHS, createBusinessIconTextures } from "./business-icons.js";

@@ -49,13 +49,13 @@
     "./src/*": "./src/*"
   },
   "devDependencies": {
+    "@rb/halo": "github:Rick-Boardman/vr-halo#main",
     "playwright": "1.62.1",
-    "@rb/halo": "https://github.com/Rick-Boardman/vr-halo/releases/download/v0.2.0/rb-halo-0.2.0.tgz",
     "three": "0.160.1",
     "troika-three-text": "0.52.4"
   },
   "peerDependencies": {
-    "@rb/halo": "0.2.0",
+    "@rb/halo": ">=0.2.0",
     "three": "0.160.1",
     "troika-three-text": "^0.52.4"
   }

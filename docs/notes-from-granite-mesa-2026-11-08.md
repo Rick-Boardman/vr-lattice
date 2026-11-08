@@ -16,3 +16,7 @@ are unchanged. Tested: `tests/node-surface.test.mjs`.
 `setEdgePreview({ fromId, ray, targetId })` on the card graph scene (null hides it): the dashed line and arrow of a connection being made,
 from the source node's outline to where the pointer's ray meets the source's plane, or to a target node's outline. It costs nothing until
 first used. Conduit and Loom call it each frame while a connection is in progress. `style.edgePreviewColor` sets the colour.
+
+`src/graph/business-board.js` and `src/graph/business-icons.js` (owner: this belongs in Lattice, not copied into each app): the board's
+connection settings, toolbar and panel colours, status badge, icon set and the connection line preview. Conduit, Loom and Insight import
+them. `@rb/halo` now follows Halo's `main`: the owner's rule is that Lattice always uses the latest Halo.
