@@ -110,6 +110,7 @@ const NODE_SURFACE_EDGE_GAP = 0.05;
 const REVERSE_EDGE_OFFSET = 0.16;
 const SELF_EDGE_STRETCH = 1.6;
 const HIDDEN_ACTION_HANDLE_LAYER = 31;
+const EDGE_PREVIEW_RENDER_ORDER = 100000;
 const DEFAULT_HEADER_HEIGHT_PX = 86;
 const DEFAULT_FLAT_PLANE = "xz";
 const DEFAULT_CARD_TITLE_FONT_SIZE_PX = 68;
@@ -496,6 +497,10 @@ export function createCardGraphScene({
   setAxisValue(emptyBoundsMax, flatAxes.normalAxis, cardLift + 0.2);
 
   const arrowGeometry = new THREE.ConeGeometry(0.12, 0.38, 10);
+  const edgePreviewColor = asHexColor(style.edgePreviewColor, 0x6ea6e0);
+  const edgePreviewPlane = new THREE.Plane();
+  const edgePreviewNormal = new THREE.Vector3();
+  let edgePreview = null;
 
   for (const node of graph.nodes) {
     const record = createNodeRecord({
@@ -1398,6 +1403,86 @@ export function createCardGraphScene({
     }
   }
 
+  function hideEdgePreview() {
+    if (!edgePreview) return;
+    edgePreview.line.visible = false;
+    edgePreview.arrow.visible = false;
+  }
+
+  function ensureEdgePreview() {
+    if (edgePreview) return edgePreview;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(6), 3));
+    const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
+      color: edgePreviewColor,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      dashSize: 0.3,
+      gapSize: 0.16,
+    }));
+    const arrow = new THREE.Mesh(arrowGeometry, new THREE.MeshBasicMaterial({
+      color: edgePreviewColor,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }));
+    line.frustumCulled = false;
+    line.renderOrder = EDGE_PREVIEW_RENDER_ORDER;
+    arrow.renderOrder = EDGE_PREVIEW_RENDER_ORDER;
+    root.add(line);
+    root.add(arrow);
+    edgePreview = { line, arrow };
+    return edgePreview;
+  }
+
+  /**
+   * Draw the connection a person is making: from the source node's outline to the pointer, or to a target node's outline.
+   *
+   * @param {{ fromId: string, ray: object, targetId?: string | null } | null} preview `ray` is the pointer's world ray; null hides the line.
+   */
+  function setEdgePreview(preview) {
+    const fromRecord = preview ? nodeRecords.get(String(preview.fromId ?? "")) : null;
+    if (!fromRecord || !preview.ray) {
+      hideEdgePreview();
+      return;
+    }
+    fromRecord.cardMesh.getWorldPosition(worldSourceCenter);
+    const targetKey = String(preview.targetId ?? "");
+    const targetRecord = targetKey && targetKey !== String(preview.fromId) ? nodeRecords.get(targetKey) : null;
+    if (targetRecord) {
+      targetRecord.cardMesh.getWorldPosition(worldTargetCenter);
+      resolveNodeSurfaceWorldPosition(targetRecord, worldSourceCenter, worldEnd);
+    } else {
+      edgePreviewNormal.set(0, 0, 1).transformDirection(fromRecord.cardMesh.matrixWorld);
+      edgePreviewPlane.setFromNormalAndCoplanarPoint(edgePreviewNormal, worldSourceCenter);
+      if (!preview.ray.intersectPlane(edgePreviewPlane, worldEnd)) {
+        hideEdgePreview();
+        return;
+      }
+      worldTargetCenter.copy(worldEnd);
+    }
+    resolveNodeSurfaceWorldPosition(fromRecord, worldTargetCenter, worldStart);
+    if (!targetRecord && worldEnd.distanceToSquared(worldSourceCenter) <= worldStart.distanceToSquared(worldSourceCenter)) {
+      hideEdgePreview(); // still inside the source node
+      return;
+    }
+    root.updateWorldMatrix(true, false);
+    root.worldToLocal(worldStart);
+    root.worldToLocal(worldEnd);
+    const { line, arrow } = ensureEdgePreview();
+    const position = line.geometry.getAttribute("position");
+    position.setXYZ(0, worldStart.x, worldStart.y, worldStart.z);
+    position.setXYZ(1, worldEnd.x, worldEnd.y, worldEnd.z);
+    position.needsUpdate = true;
+    line.computeLineDistances();
+    tangent.copy(worldEnd).sub(worldStart).normalize();
+    arrow.position.copy(worldEnd).addScaledVector(tangent, -0.2);
+    arrow.quaternion.setFromUnitVectors(upVector, tangent);
+    line.visible = true;
+    arrow.visible = true;
+  }
+
   function update() {
     for (const record of nodeRecords.values()) {
       updateNodePlacement(record);
@@ -1424,6 +1509,7 @@ export function createCardGraphScene({
     setSelectedIds,
     setSelectedEdgeKey,
     setHoveredId,
+    setEdgePreview,
     getFlatBounds,
     getNodeFlatPosition: (nodeId) => flatPositions.get(String(nodeId ?? ""))?.clone?.() ?? null,
     translateFlatPositions,
@@ -1444,6 +1530,9 @@ export function createCardGraphScene({
     dispose() {
       rootParent.remove?.(root);
       arrowGeometry.dispose?.();
+      edgePreview?.line.geometry?.dispose?.();
+      edgePreview?.line.material?.dispose?.();
+      edgePreview?.arrow.material?.dispose?.();
       for (const record of nodeRecords.values()) {
         disposeNodeRecord(record);
       }

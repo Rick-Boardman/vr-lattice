@@ -12,3 +12,7 @@ for card, pill, diamond and hexagon shapes. A straight line bends only when anot
 running both ways keeps apart by 0.16; a self-connection is a small loop on the right. Standing handles go: the out handle shows on the
 selected node only, at its right edge, on a layer neither the cameras nor the pick ray see otherwise. Other modes and the sphere layout
 are unchanged. Tested: `tests/node-surface.test.mjs`.
+
+`setEdgePreview({ fromId, ray, targetId })` on the card graph scene (null hides it): the dashed line and arrow of a connection being made,
+from the source node's outline to where the pointer's ray meets the source's plane, or to a target node's outline. It costs nothing until
+first used. Conduit and Loom call it each frame while a connection is in progress. `style.edgePreviewColor` sets the colour.
