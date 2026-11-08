@@ -51,6 +51,7 @@ import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWind
  * @param {number} [options.hud.hotbarSlotCount=4] Hotbar slot count forwarded to the HUD system.
  * @param {Array<unknown> | null} [options.hud.hotbarTooltips=null] Optional hotbar tooltip lines.
  * @param {boolean} [options.hud.reserveSystemHotbarSlots=true] Whether the shared debug/help hotbar tail stays reserved.
+ * @param {string | object} [options.hud.theme] HUD window theme preset name or override bag ("professional" when left out).
  * @param {string} [options.hud.uiPreset="default"] HUD window preset string forwarded to the shared HUD bootstrap.
  * @param {Array<string> | null} [options.hud.visibleWindowKeys=null] Optional list of shared Halo panel keys that should exist for this graph scene.
  * @param {Array<string> | null} [options.hud.hiddenWindowKeys=null] Optional list of shared Halo panel keys that should start hidden.
@@ -120,6 +121,7 @@ export function createGraphSceneContext({
     hotbarSlotCount = 4,
     hotbarTooltips = null,
     reserveSystemHotbarSlots = true,
+    theme: hudTheme = undefined,
     uiPreset = "default",
     visibleWindowKeys = null,
     hiddenWindowKeys = null,
@@ -223,6 +225,7 @@ export function createGraphSceneContext({
       windowClampMode,
       hotbarSlotCount,
       hotbarTooltips: Array.isArray(hotbarTooltips) ? hotbarTooltips : undefined,
+      theme: hudTheme,
       reserveSystemHotbarSlots,
       uiPreset,
       visibleWindowKeys: Array.isArray(visibleWindowKeys) ? visibleWindowKeys : undefined,
