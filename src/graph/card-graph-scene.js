@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { resolveNodeSurfaceReach } from "./node-surface.js";
 import {
   applyGraphTroikaRenderSettings,
   asHexColor,
@@ -45,7 +46,7 @@ import {
  *   flatEdgePlaneOffset?: number,
  *   flatEdgeCurvePlaneOffset?: number,
  *   flatEdgeLabelPlaneOffset?: number,
- *   flatActionEdgeAnchorMode?: string,
+ *   flatActionEdgeAnchorMode?: string, // "fixed", "closest-side", "vertical-sides", "horizontal-sides" or "nearest-surface" (straight, outline to outline)
  *   flatActionDirectionalHandlesEnabled?: boolean,
  *   flatObstacleDetourEnabled?: boolean,
  *   flatOrientation?: string,
@@ -105,6 +106,10 @@ const DEFAULT_CARD_HEIGHT = 2.5;
 const DEFAULT_CARD_RADIUS = 22;
 const DEFAULT_PORT_RADIUS = 0.11;
 const DEFAULT_ACTION_HANDLE_RADIUS = 0.16;
+const NODE_SURFACE_EDGE_GAP = 0.05;
+const REVERSE_EDGE_OFFSET = 0.16;
+const SELF_EDGE_STRETCH = 1.6;
+const HIDDEN_ACTION_HANDLE_LAYER = 31;
 const DEFAULT_HEADER_HEIGHT_PX = 86;
 const DEFAULT_FLAT_PLANE = "xz";
 const DEFAULT_CARD_TITLE_FONT_SIZE_PX = 68;
@@ -395,6 +400,9 @@ export function createCardGraphScene({
     ? Number(style.flatEdgeLabelPlaneOffset)
     : (Number.isFinite(flatEdgePlaneOffset) ? flatEdgePlaneOffset + 0.026 : NaN);
   const flatActionEdgeAnchorMode = String(style.flatActionEdgeAnchorMode ?? "fixed").trim().toLowerCase();
+  // "nearest-surface": on a flat board a connection is a straight line from outline to outline, and a node has no
+  // standing handles: the connect handle shows on the selected node only.
+  const flatSurfaceEdgeRouting = flatActionEdgeAnchorMode === "nearest-surface";
   const flatActionDirectionalHandlesEnabled = style.flatActionDirectionalHandlesEnabled !== false;
   const flatObstacleDetourEnabled = style.flatObstacleDetourEnabled !== false;
   const flatOrientation = String(style.flatOrientation ?? "billboard").toLowerCase();
@@ -538,6 +546,7 @@ export function createCardGraphScene({
     for (const handle of record.actionHandles) actionHandleHitTargets.push(handle.mesh);
   }
 
+  const edgeDirectionKeys = new Set(graph.edges.map((edge) => `${edge.fromId}\u0000${edge.toId}`));
   for (const edge of graph.edges) {
     const sourcePort = nodeRecords.get(edge.fromId)?.outputPorts.find((entry) => entry.key === String(edge.fromPort ?? ""))?.port ?? null;
     const targetPort = nodeRecords.get(edge.toId)?.inputPorts.find((entry) => entry.key === String(edge.toPort ?? ""))?.port ?? null;
@@ -630,6 +639,7 @@ export function createCardGraphScene({
     edgeHitTargets.push(line);
     edgeRecords.push({
       edge,
+      hasReverseEdge: edge.fromId !== edge.toId && edgeDirectionKeys.has(`${edge.toId}\u0000${edge.fromId}`),
       edgeClass,
       edgeVisualStyle,
       line,
@@ -811,17 +821,37 @@ export function createCardGraphScene({
     const toRecord = nodeRecords.get(record.edge.toId);
     if (!fromRecord || !toRecord) return;
 
-    const useDirectionalHandles = record.edgeClass === "data"
-      || (flatActionDirectionalHandlesEnabled && (
-        fromRecord.actionHandleByRole?.out
-        || toRecord.actionHandleByRole?.in
-        || (record.edgeClass === "action" && currentLayoutMode === "flat")
-      ));
+    const surfaceRoute = flatSurfaceEdgeRouting && currentLayoutMode === "flat";
+    const selfEdge = surfaceRoute && record.edge.fromId === record.edge.toId;
+    const useDirectionalHandles = surfaceRoute
+      ? selfEdge
+      : record.edgeClass === "data"
+        || (flatActionDirectionalHandlesEnabled && (
+          fromRecord.actionHandleByRole?.out
+          || toRecord.actionHandleByRole?.in
+          || (record.edgeClass === "action" && currentLayoutMode === "flat")
+        ));
 
     fromRecord.cardMesh.getWorldPosition(worldSourceCenter);
     toRecord.cardMesh.getWorldPosition(worldTargetCenter);
 
-    if (record.edgeClass === "data") {
+    if (selfEdge) {
+      resolveSelfEdgeAnchorWorldPosition(fromRecord, -1, worldStart);
+      resolveSelfEdgeAnchorWorldPosition(fromRecord, 1, worldEnd);
+    } else if (surfaceRoute) {
+      resolveNodeSurfaceWorldPosition(fromRecord, worldTargetCenter, worldStart);
+      resolveNodeSurfaceWorldPosition(toRecord, worldSourceCenter, worldEnd);
+      if (record.hasReverseEdge) {
+        // A pair running both ways would lie on one line: each keeps to its own side.
+        const across = getAxisValue(worldTargetCenter, flatAxes.horizontalAxis) - getAxisValue(worldSourceCenter, flatAxes.horizontalAxis);
+        const along = getAxisValue(worldTargetCenter, flatAxes.verticalAxis) - getAxisValue(worldSourceCenter, flatAxes.verticalAxis);
+        const length = Math.max(1e-6, Math.hypot(across, along));
+        for (const point of [worldStart, worldEnd]) {
+          addAxisValue(point, flatAxes.horizontalAxis, (-along / length) * REVERSE_EDGE_OFFSET);
+          addAxisValue(point, flatAxes.verticalAxis, (across / length) * REVERSE_EDGE_OFFSET);
+        }
+      }
+    } else if (record.edgeClass === "data") {
       resolveEdgeAnchorWorldPosition(fromRecord, record.edge.fromPort, "output", worldStart);
       resolveEdgeAnchorWorldPosition(toRecord, record.edge.toPort, "input", worldEnd);
     } else {
@@ -847,7 +877,9 @@ export function createCardGraphScene({
 
     if (useDirectionalHandles) {
       const edgeDistance = worldStart.distanceTo(worldEnd);
-      const stretch = Math.max(record.edgeClass === "data" ? 0.6 : 0.9, edgeDistance * (record.edgeClass === "data" ? 0.34 : 0.28));
+      const stretch = selfEdge
+        ? SELF_EDGE_STRETCH
+        : Math.max(record.edgeClass === "data" ? 0.6 : 0.9, edgeDistance * (record.edgeClass === "data" ? 0.34 : 0.28));
       if (worldStartDirection.lengthSq() <= 1e-6) {
         worldStartDirection.copy(worldEnd).sub(worldStart);
       }
@@ -965,10 +997,28 @@ export function createCardGraphScene({
     }
   }
 
+  function syncActionHandlePresentation(record, isSelected) {
+    const surfaceRoute = flatSurfaceEdgeRouting && currentLayoutMode === "flat";
+    for (const handle of record.actionHandles ?? []) {
+      if (!handle?.mesh) continue;
+      if (!surfaceRoute) {
+        handle.mesh.layers.set(0);
+        handle.mesh.position.copy(handle.homePosition);
+        continue;
+      }
+      // A layer the cameras and the pick ray both skip: an unused handle is neither drawn nor clicked.
+      handle.mesh.layers.set(handle.role === "out" && isSelected ? 0 : HIDDEN_ACTION_HANDLE_LAYER);
+      if (handle.role === "out") {
+        handle.mesh.position.set(record.shapeHalfWidth + handle.radius * 1.6, 0, handle.homePosition.z);
+      }
+    }
+  }
+
   function syncHighlights() {
     for (const record of nodeRecords.values()) {
       const isSelected = selectedIds.has(record.node.id);
       const isHovered = hoveredId === record.node.id;
+      syncActionHandlePresentation(record, isSelected);
       const baseAccent = asHexColor(getNodeAccentColor(record.node), 0x5f8fc9);
       const baseBorder = asHexColor(getNodeBorderColor(record.node), baseAccent);
       applyNodeDepthPriority(record, isSelected);
@@ -1553,6 +1603,8 @@ function createNodeRecord({
     labelMesh: textMeshes.shapeTitleText,
     cardWidth,
     cardHeight,
+    shapeHalfWidth: shapeMetrics.width * 0.5,
+    shapeHalfHeight: shapeMetrics.height * 0.5,
     actionHandleRadius,
     cardHeaderHeightPx,
     cardTitleFontSizePx,
@@ -1900,7 +1952,7 @@ function createActionHandle({ THREE, node, role, x, y, z, radius, color }) {
     node,
     role,
   };
-  return { role, mesh };
+  return { role, mesh, radius, homePosition: mesh.position.clone() };
 }
 
 function updateCardTexture({
@@ -2196,6 +2248,29 @@ function resolveEdgeAnchorWorldPosition(record, portKey, side, target, flatAxes 
   }
   record.cardMesh.getWorldPosition(target);
   addAxisValue(target, flatAxes.horizontalAxis, side === "input" ? -resolveNodeSideAnchorOffset(record) : resolveNodeSideAnchorOffset(record));
+  return target;
+}
+
+function resolveNodeSurfaceWorldPosition(record, towardWorld, target) {
+  const cardMesh = record.cardMesh;
+  target.copy(towardWorld);
+  cardMesh.worldToLocal(target);
+  const length = Math.hypot(target.x, target.y);
+  if (length <= 1e-6) {
+    cardMesh.getWorldPosition(target);
+    return target;
+  }
+  const ux = target.x / length;
+  const uy = target.y / length;
+  const reach = resolveNodeSurfaceReach(record.shape, record.shapeHalfWidth, record.shapeHalfHeight, ux, uy) + NODE_SURFACE_EDGE_GAP;
+  target.set(ux * reach, uy * reach, 0.08);
+  cardMesh.localToWorld(target);
+  return target;
+}
+
+function resolveSelfEdgeAnchorWorldPosition(record, verticalSign, target) {
+  target.set(record.shapeHalfWidth + NODE_SURFACE_EDGE_GAP, verticalSign * record.shapeHalfHeight * 0.5, 0.08);
+  record.cardMesh.localToWorld(target);
   return target;
 }
 
