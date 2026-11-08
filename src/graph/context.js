@@ -22,6 +22,7 @@ import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWind
  * @param {number} [options.renderer.oculusMaxPixelRatio=2] Oculus-browser pixel-ratio cap applied by configureXrSafeRenderer.
  * @param {object} [options.scene] Scene appearance configuration.
  * @param {number} [options.scene.background=0x0a0e27] Scene background color.
+ * @param {boolean} [options.scene.fog=true] Whether the scene has distance fog. A flat board that the view backs away from to fit should not: its content fades as the view widens.
  * @param {number} [options.scene.fogColor=0x0a0e27] Fog color.
  * @param {number} [options.scene.fogNear=55] Fog near distance.
  * @param {number} [options.scene.fogFar=260] Fog far distance.
@@ -85,6 +86,7 @@ export function createGraphSceneContext({
 
   scene: {
     background = 0x0a0e27,
+    fog = true,
     fogColor = 0x0a0e27,
     fogNear = 55,
     fogFar = 260,
@@ -153,7 +155,7 @@ export function createGraphSceneContext({
 
   const sceneObj = new THREE.Scene();
   sceneObj.background = new THREE.Color(background);
-  sceneObj.fog = new THREE.Fog(fogColor, fogNear, fogFar);
+  sceneObj.fog = fog ? new THREE.Fog(fogColor, fogNear, fogFar) : null;
 
   const cameraObj = new THREE.PerspectiveCamera(
     fov,
