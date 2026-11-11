@@ -5,7 +5,7 @@ components retain their own licenses; the root LICENSE does not relicense them.
 
 | Component | Locked version | License | Distribution |
 | --- | --- | --- | --- |
-| Three.js | 0.160.1 | MIT | Installed dependency; provided by the application |
+| Three.js | 0.185.1 | MIT | Installed dependency; provided by the application |
 | troika-three-text | 0.52.4 | MIT | Installed dependency |
 | troika-three-utils | 0.52.4 | MIT | Transitive dependency |
 | troika-worker-utils | 0.52.0 | MIT | Transitive dependency |
@@ -25,7 +25,7 @@ integrity hashes, and license identifiers are recorded in package-lock.json.
 
 | Additional component | Locked version | License | Distribution |
 | --- | --- | --- | --- |
-| Halo | 0.2.0 | Apache-2.0, with separately licensed fonts/data | Application-provided peer |
+| Halo | 0.3.0 | Apache-2.0, with separately licensed fonts/data | Application-provided peer |
 | @dagrejs/dagre | 3.0.0 | MIT | Installed dependency |
 | @dagrejs/graphlib | 4.0.1 | MIT | Installed with Dagre; included in Dagre's ESM build |
 

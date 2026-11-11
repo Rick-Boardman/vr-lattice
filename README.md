@@ -78,8 +78,9 @@ browser import maps, and a runnable example. Browser-native modules need an
 import map; bundlers resolve package imports normally. Keep one Three.js instance.
 
 The package entry point is `@rb/lattice`; `/graph`, `/mermaid`, and documented
-`/src/` subpaths are also available. Halo 0.2.0, Three.js 0.160.1, and Troika
-are application-provided peers. Browser applications consume the installed source
+`/src/` subpaths are also available. Halo, Three.js 0.185.1, and Troika
+are application-provided peers. Lattice 0.3.0 is tested with Halo 0.3.0 and
+requires WebGL 2. Browser applications consume the installed source
 package through an import map; see [Browser distribution](docs/browser-distribution.md).
 
 ## Develop and contribute
