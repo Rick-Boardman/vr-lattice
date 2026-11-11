@@ -4,7 +4,7 @@ Copyright 2026 Richard Boardman
 Licensed under the Apache License, Version 2.0.
 See LICENSE for the complete terms.
 
-The optional browser distribution includes Dagre and Graphlib under MIT.
+Dagre is an installed dependency and includes Graphlib under MIT.
 Full license texts are in LICENSES/. Halo, Three.js, and Troika are separately
 licensed dependencies. See THIRD_PARTY.md for versions and provenance.
 
