@@ -12,7 +12,7 @@
   "dependencies": {
     "@dagrejs/dagre": "3.0.0"
   },
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "author": "Richard Boardman",
   "description": "Graph and Mermaid visualization for desktop, touch, and WebXR, built on Halo.",
@@ -49,14 +49,14 @@
     "./src/*": "./src/*"
   },
   "devDependencies": {
-    "@rb/halo": "github:Rick-Boardman/vr-halo#main",
+    "@rb/halo": "github:Rick-Boardman/vr-halo#v0.3.0",
     "playwright": "1.62.1",
-    "three": "0.160.1",
+    "three": "0.185.1",
     "troika-three-text": "0.52.4"
   },
   "peerDependencies": {
     "@rb/halo": ">=0.2.0",
-    "three": "0.160.1",
+    "three": "0.185.1",
     "troika-three-text": "^0.52.4"
   }
 }
