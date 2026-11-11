@@ -165,8 +165,8 @@ export function wireDesktopResize({ renderer, camera, hudSystem }) {
 /**
  * Purpose: Start the canonical asynchronous graph-scene boot loop that builds scene content once, renders each frame through the shared HUD pipeline, and optionally reports boot stage and FPS telemetry.
  * @param {object} [options] Async boot-loop configuration.
- * @param {{ Clock: new () => { getDelta(): number } }} [options.THREE] Three.js namespace used to allocate the per-frame Clock.
- * @param {{ setAnimationLoop: (callback: () => void) => void }} [options.renderer] Renderer that owns the animation loop.
+ * @param {{ Timer: new () => { update(timestamp?: number): unknown, getDelta(): number } }} [options.THREE] Three.js namespace used to allocate the per-frame Timer.
+ * @param {{ setAnimationLoop: (callback: (timestamp?: number) => void) => void }} [options.renderer] Renderer that owns the animation loop.
  * @param {unknown} [options.scene] Scene rendered by the shared HUD frame loop.
  * @param {unknown} [options.camera] Camera rendered by the shared HUD frame loop.
  * @param {{ appendChatLine?: (entry: { text: string, color: number }) => void } | null} [options.hudSystem] Optional HUD system used for boot-failure chat diagnostics.
@@ -179,7 +179,7 @@ export function wireDesktopResize({ renderer, camera, hudSystem }) {
  * @param {number} [options.fpsWindowSeconds=0.5] Time window in seconds used to aggregate FPS samples before invoking onFps.
  * @param {((fps: number) => void) | null} [options.onFps=null] Optional callback invoked when the aggregated integer FPS value changes.
  * @returns {void} Does not return a value.
- * Side effects: installs a renderer animation loop, allocates a Three.Clock, executes the build function asynchronously, writes boot status flags onto window when configured, renders frames through renderHudFrame, logs build and callback errors to the console, and may append HUD chat diagnostics and FPS telemetry.
+ * Side effects: installs a renderer animation loop, allocates a Three.Timer without document listeners, executes the build function asynchronously, writes boot status flags onto window when configured, renders frames through renderHudFrame, logs build and callback errors to the console, and may append HUD chat diagnostics and FPS telemetry.
  */
 export function startAsyncBootLoop({
   THREE,
@@ -206,7 +206,7 @@ export function startAsyncBootLoop({
   let bootFailed = false;
   let bootErrorShown = false;
 
-  const clock = new THREE.Clock();
+  const timer = new THREE.Timer();
   let fpsAccumT = 0;
   let fpsFrames = 0;
   let fpsLastInt = 0;
@@ -220,8 +220,9 @@ export function startAsyncBootLoop({
     }
   }
 
-  renderer.setAnimationLoop(() => {
-    const dt = clock.getDelta();
+  renderer.setAnimationLoop((timestamp) => {
+    timer.update(timestamp);
+    const dt = timer.getDelta();
 
     if (!bootStarted) {
       bootStarted = true;
