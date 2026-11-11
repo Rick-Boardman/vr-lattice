@@ -37,7 +37,7 @@ demo above does not parse Mermaid or exercise the Mermaid renderer.
 ## Install a versioned package in another application
 
 ```sh
-npm install three@0.185.1 troika-three-text@0.52.4 @dagrejs/dagre@3.0.0 github:Rick-Boardman/vr-halo#v0.3.0 github:Rick-Boardman/vr-lattice#v0.3.0
+npm install three@0.185.1 troika-three-text@0.52.4 @dagrejs/dagre@3.0.0 github:Rick-Boardman/vr-halo#v0.3.0 github:Rick-Boardman/vr-lattice#v0.3.1
 ```
 
 Import graph helpers from `@rb/lattice` and the frame loop from `@rb/halo`.
@@ -50,11 +50,12 @@ Copy Halo's asset directory and its accompanying font licenses together when
 self-hosting modules. Serve JavaScript with a JavaScript MIME type.
 
 Lattice 0.3.0 raises the exact Three.js peer from 0.160.1 to 0.185.1 and is
-tested with Halo 0.3.0. Upgrade the application's Three.js installation and
-Halo pin together; retain a single Three.js instance for Halo, Lattice, and
-Troika. The Halo peer range remains `>=0.2.0`, and Troika remains `^0.52.4`
-(development uses 0.52.4). WebGL 2 is required: Three.js removed WebGL 1
-support in r163. Public Lattice module paths are unchanged.
+tested with Halo 0.3.0. Lattice 0.3.1 keeps that peer set. Graph boot uses
+`THREE.Timer` instead of the deprecated `THREE.Clock`. Upgrade the application's
+Three.js installation and Halo pin together; retain a single Three.js instance
+for Halo, Lattice, and Troika. The Halo peer range remains `>=0.2.0`, and Troika
+remains `^0.52.4` (development uses 0.52.4). WebGL 2 is required: Three.js
+removed WebGL 1 support in r163. Public Lattice module paths are unchanged.
 
 ## Validate
 
