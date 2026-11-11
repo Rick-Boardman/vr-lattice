@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/check-relative-imports.mjs && node --test tests/*.test.mjs && node scripts/build-browser.mjs",
+    "build": "node scripts/check-relative-imports.mjs && node --test tests/*.test.mjs",
     "start": "node scripts/serve.mjs",
     "test:browser": "node scripts/test-browser.mjs",
     "audit:release": "node scripts/audit-release.mjs",

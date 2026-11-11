@@ -80,8 +80,8 @@ import map; bundlers resolve package imports normally. Keep one Three.js instanc
 The package entry point is `@rb/lattice`; `/graph`, `/mermaid`, and documented
 `/src/` subpaths are also available. Halo, Three.js 0.185.1, and Troika
 are application-provided peers. Lattice 0.3.0 is tested with Halo 0.3.0 and
-requires WebGL 2. A separate browser build preserves existing
-sibling `/lattice/` and `/halo/` hosting paths.
+requires WebGL 2. Browser applications consume the installed source
+package through an import map; see [Browser distribution](docs/browser-distribution.md).
 
 ## Develop and contribute
 
