@@ -1119,6 +1119,16 @@ export function createCardGraphScene({
         record.cardMesh.scale.setScalar(1);
         continue;
       }
+      if (record.shape === "diamond") {
+        // Paint inside the actual face rather than scaling a same-colored mesh
+        // behind it; the hit surface and connector geometry must stay put.
+        paintDiamondBorder(record, baseAccent, baseBorder, isSelected ? "selected" : isHovered ? "hover" : "normal");
+        record.shadowMesh.visible = false;
+        record.shadowMesh.scale.setScalar(1);
+        record.cardMesh.scale.setScalar(1);
+        record.labelMesh?.scale?.setScalar(1);
+        continue;
+      }
         const decoratedShapeTexture = shouldUseDecoratedShapeTexture(record.shape);
       const scale = isSelected ? 1.03 : isHovered ? 1.015 : 1;
         if (decoratedShapeTexture) {
@@ -1713,7 +1723,7 @@ function createNodeRecord({
   const texture = new THREE.CanvasTexture(canvas);
   // CSS colors written into the canvas are sRGB. Treating them as linear washes out
   // the colored ribbons and badge fills when the renderer converts to sRGB output.
-  if (appearance) texture.colorSpace = THREE.SRGBColorSpace;
+  if (appearance || shape === "diamond") texture.colorSpace = THREE.SRGBColorSpace;
   configureCanvasTexture(THREE, texture, canvas);
 
   const shadowMesh = new THREE.Mesh(
@@ -2327,7 +2337,10 @@ function updateCardTexture({
     }, record.textMeshes.shapeTitleText);
     const decoratedShapeTexture = shouldUseDecoratedShapeTexture(shape);
     ctx.clearRect(0, 0, width, height);
-    if (decoratedShapeTexture) {
+    if (shape === "diamond") {
+      record.diamondBorderKey = null;
+      paintDiamondBorder(record, accent, border);
+    } else if (decoratedShapeTexture) {
       drawShapeNodeTexture({
         ctx,
         width,
@@ -2348,7 +2361,7 @@ function updateCardTexture({
       record.cardMesh.material.color.setHex(accent);
     }
     record.cardMesh.material.needsUpdate = true;
-    record.shadowMesh.visible = !decoratedShapeTexture;
+    record.shadowMesh.visible = shape !== "diamond" && !decoratedShapeTexture;
     record.shadowMesh.material.color.setHex(border);
     record.shadowMesh.material.opacity = 1;
     record.shadowMesh.material.needsUpdate = true;
@@ -3137,6 +3150,36 @@ function resolveEdgeVisualStyle(edge) {
     return "dash";
   }
   return "arrow";
+}
+
+function paintDiamondBorder(record, accent, border, state = "normal") {
+  const { appearance, canvas, cardMesh, texture } = record;
+  const selected = state === "selected";
+  const hovered = state === "hover";
+  const requested = selected ? appearance?.selected ?? DEFAULT_CARD_HIGHLIGHT_COLOR
+    : hovered ? appearance?.hover ?? DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR : appearance?.border ?? border;
+  const direction = graphContrastRatio(0, accent) >= graphContrastRatio(0xffffff, accent) ? "darker" : "lighter";
+  const stroke = graphContrastColor(requested, accent, selected ? 5 : hovered ? 4 : 3.2, 1, direction);
+  const key = `${accent}:${stroke}:${state}`;
+  if (record.diamondBorderKey === key) return;
+  record.diamondBorderKey = key;
+
+  const { width, height } = canvas;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = toCssColor(accent);
+  ctx.fillRect(0, 0, width, height);
+  ctx.save();
+  // UVs cover the exact diamond; the geometry clips the outside half of
+  // this stroke, so even the selected state retains the original silhouette.
+  ctx.lineJoin = "miter";
+  ctx.lineWidth = Math.min(width, height) * (selected ? 0.096 : hovered ? 0.068 : 0.056);
+  ctx.strokeStyle = toCssColor(stroke);
+  traceShapeTexturePath(ctx, "diamond", width, height, 0);
+  ctx.stroke();
+  ctx.restore();
+  cardMesh.material.map = texture;
+  cardMesh.material.color.setHex(0xffffff);
+  texture.needsUpdate = true;
 }
 
 function drawShapeNodeTexture({
