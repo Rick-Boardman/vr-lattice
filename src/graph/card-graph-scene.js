@@ -123,6 +123,9 @@ const DEFAULT_CARD_TITLE_FONT_SIZE_PX = 68;
 const DEFAULT_CARD_BADGE_FONT_SIZE_PX = 34;
 const DEFAULT_CARD_BODY_FONT_SIZE_PX = 28;
 const DEFAULT_EDGE_LABEL_FONT_SIZE_PX = 48;
+// Captions in card scenes sit above every edge stroke/arrow (maximum .55),
+// but remain below stacked node cards. Keep distinct edge caption priorities.
+const EDGE_CAPTION_RENDER_ORDER = { ordinary: 0.6, multiselected: 0.7, selected: 0.8 };
 const DEFAULT_EDGE_LABEL_WORLD_HEIGHT = 1.02;
 const DEFAULT_EDGE_LABEL_MIN_WORLD_WIDTH = 5.2;
 const NODE_STACK_RENDER_ORDER_STEP = 10;
@@ -654,7 +657,7 @@ export function createCardGraphScene({
       })
       : null;
     if (labelSprite) {
-      labelSprite.setRenderOrder?.(0.2);
+      labelSprite.setRenderOrder?.(EDGE_CAPTION_RENDER_ORDER.ordinary);
       root.add(labelSprite);
       editHitTargets.push(labelSprite.userData.backgroundMesh);
     }
@@ -1158,7 +1161,8 @@ export function createCardGraphScene({
         record.reverseArrow.renderOrder = isExplicitlySelectedEdge ? 0.55 : isMultiSelectedEdge ? 0.4 : 0.1;
       }
       if (record.labelSprite) {
-        record.labelSprite.setRenderOrder?.(isExplicitlySelectedEdge ? 0.65 : isMultiSelectedEdge ? 0.5 : 0.2);
+        record.labelSprite.setRenderOrder?.(isExplicitlySelectedEdge ? EDGE_CAPTION_RENDER_ORDER.selected :
+          isMultiSelectedEdge ? EDGE_CAPTION_RENDER_ORDER.multiselected : EDGE_CAPTION_RENDER_ORDER.ordinary);
         if (record.labelBaseScale && record.labelSprite.scale?.copy) {
           record.labelSprite.scale.copy(record.labelBaseScale);
           if (isSelectedEdge) {
@@ -2707,7 +2711,9 @@ function applyEdgeLabelAppearance(THREE, label, appearance) {
   textMesh.sync?.();
   label.userData.captionOutline.material.color.setHex(appearance.labelBorder);
   backgroundMesh.material.color.setHex(appearance.labelFill);
-  backgroundMesh.material.opacity = 0.96;
+  // The caption and edge render in the same ordered blended pass. An opaque
+  // fill here fully covers the routed stroke without changing world depth.
+  backgroundMesh.material.opacity = 1;
 }
 
 function disposeNodeRecord(record) {

@@ -224,7 +224,8 @@ function chainOnBeforeRender(mesh, callback) {
 }
 
 function applyBillboardLabelRenderOrder(group, renderOrder) {
-  const resolved = Math.floor(Number(renderOrder) || 0);
+  const order = Number(renderOrder);
+  const resolved = Number.isFinite(order) ? order : 0;
   group.renderOrder = resolved;
   if (group.userData?.backgroundMesh) {
     group.userData.backgroundMesh.renderOrder = resolved;
@@ -233,7 +234,12 @@ function applyBillboardLabelRenderOrder(group, renderOrder) {
     group.userData.borderMesh.renderOrder = resolved + 0.01;
   }
   if (group.userData?.textMesh) {
-    group.userData.textMesh.renderOrder = resolved + 0.02;
+    const text = group.userData.textMesh;
+    applyGraphTroikaRenderSettings(text, {
+      depthTest: text.userData.graphTroikaDepthTest,
+      depthWrite: text.userData.graphTroikaDepthWrite,
+      renderOrder: resolved + 0.02,
+    });
   }
 }
 
