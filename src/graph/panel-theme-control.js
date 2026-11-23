@@ -56,7 +56,7 @@ export function installGraphPanelThemeControl(ctx, {
       return {
         text: label,
         actionButtonText: current === mode ? "Active" : "Use",
-        actionButtonWidthPx: 66,
+        actionButtonWidthPx: 80,
         actionButtonTextColor: 0xf4f8ff,
         actionButtonBgColor: current === mode ? 0x3c5269 : 0x245e96,
         actionButtonBgOpacity: 1,
