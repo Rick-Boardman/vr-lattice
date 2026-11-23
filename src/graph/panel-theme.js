@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const lightContent = Object.freeze({ surface: 0xf8fafc, text: 0x22354a, row: 0xf1f5f9, selectedRow: 0xd7e7f8,
-  field: 0xdde9f6, fieldText: 0x173754, accent: 0x245e96, accentText: 0xffffff, track: 0xd9e4ef, thumb: 0x738da6 });
+  field: 0xffffff, fieldText: 0x0b2137, fieldBorder: 0x5e748a, focus: 0x1d5790,
+  selection: 0xc0dcfa, selectionOpacity: 0.72, selectionText: 0x0b2137, caret: 0x0b2137,
+  disabledField: 0xe8edf3, disabledText: 0x455c74, hotbarTitle: 0x091d30, hotbarFill: 0x31475d, hotbarActive: 0x245e96, accent: 0x245e96, accentText: 0xffffff, track: 0xd9e4ef, thumb: 0x738da6 });
 const darkContent = Object.freeze({ surface: 0x182536, text: 0xe9f0f9, row: 0x1c2a3d, selectedRow: 0x294b74,
-  field: 0x334b67, fieldText: 0xf1f6fc, accent: 0x2a5e93, accentText: 0xffffff, track: 0x25364a, thumb: 0x849ab4 });
+  field: 0x23384d, fieldText: 0xf1f6fc, fieldBorder: 0x8aa3bd, focus: 0xa8d4ff,
+  selection: 0x375b85, selectionOpacity: 0.76, selectionText: 0xffffff, caret: 0xffffff,
+  disabledField: 0x26384a, disabledText: 0x9bb0c6, hotbarFill: 0x293e54, hotbarActive: 0x245e96, accent: 0x2a5e93, accentText: 0xffffff, track: 0x25364a, thumb: 0x849ab4 });
 
 const common = { panelBgOpacity: 1, titleBarOpacity: 1, contentBgOpacity: 1,
   borderOpacity: 1, borderInset: 0, controlStyle: "quiet" };
@@ -67,7 +71,7 @@ export function installGraphPanelTheme(hudSystem, initialMode) {
     // Halo 0.3 stores the glyphs in bright textures; tint those meshes, not the hit targets.
     if (!win._hudSkinKey && win.titleBarColor === painted.titleBarColor) {
       for (const key of ["minBtn", "closeBtn", "actionBtn"]) {
-        objs?.[key]?.material?.color?.setHex(theme.key === "light" ? 0x30465e : 0xffffff);
+        objs?.[key]?.material?.color?.setHex(theme.key === "light" ? 0x22364c : 0xffffff);
       }
     }
     if (objs?.contentBg?.material && win.contentBgColor != null) {
