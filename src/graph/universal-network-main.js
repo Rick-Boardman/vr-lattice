@@ -20,6 +20,7 @@ import {
   HUD_TEXT_INFO_COLOR,
 } from "@rb/halo/src/hud-text-style.js";
 import { createWorldHoverOutline } from "@rb/halo/src/world-hover-outline.js";
+import { layoutConnectivityNetwork3d } from "./network-connectivity-layout.js";
 import { layoutPackedNetwork } from "./network-packed-layout.js";
 import { layoutClusteredGraphApplicationStyle } from "./application-style-layout.js";
 import { fetchJsonWithTimeout } from "./json-io.js";
@@ -167,6 +168,9 @@ function compileJsonConfig(json) {
     layout: {
       computePositions: async ({ graph, seed }) => {
         const groupById = makeGroupByIdForLayoutMode(graph, layoutMode, json?.layout?.grouping || {});
+        if (json?.layout?.strategy === "connectivity3d") {
+          return layoutConnectivityNetwork3d({ THREE, graph, groupById, settings: json.layout, seed });
+        }
         if (["community", "packed"].includes(json?.layout?.strategy)) {
           return layoutPackedNetwork({ THREE, graph, groupById, settings: json.layout, seed });
         }

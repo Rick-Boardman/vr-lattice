@@ -32,7 +32,7 @@ function addTie(map, a, b, w) {
 
 // One bounded weighted modularity refinement within each declared group;
 // deterministic ties, isolates remain singleton, and declared groups never mix.
-function communities(ids, affinity) {
+export function findWeightedNetworkCommunities(ids, affinity) {
   const membership = new Map(ids.map(id=>[id,id]));
   const degree = new Map(ids.map(id=>[id,[...(affinity.get(id)?.values() ?? [])].reduce((a,b)=>a+b,0)]));
   const volume = new Map(degree);
@@ -130,7 +130,7 @@ export function layoutPackedNetwork({ THREE, graph, groupById, settings={}, seed
     const children=groups.get(group);
     let bundles=[];
     if (isCommunity) {
-      const byCommunity = communities(children,affinities);
+      const byCommunity = findWeightedNetworkCommunities(children,affinities);
       const subgroups = new Map();
       for (const id of children) bucket(subgroups,byCommunity.get(id),id);
       for (const members of subgroups.values()) {
