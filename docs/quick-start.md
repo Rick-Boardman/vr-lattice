@@ -100,3 +100,13 @@ and `installGraphPanelThemeControl(ctx, { storageKey })` for the optional
 native Appearance panel. Without an explicit host mode, the control restores
 the saved choice or follows system light/dark preference until the user
 chooses a mode. Call the control's `dispose()` when removing it.
+
+### Scroll saved card text
+
+For cards with authored text, opt in with `createCardGraphScene({ enableSavedBodyScroll: true, ... })`.
+Overflowing bodies render an in-scene track and thumb with the full text clipped
+to the body; short bodies have no scrollbar. After hitting the frontmost card,
+a host can request `getBodyScrollTarget(nodeId)` to obtain its card-local rail
+bounds, scroll position and thumb fraction. Route wheel scrolling through
+`scrollBy` (fractions of one body height) or rail dragging through `scrollTo`
+(0 to 1). Selection, graph positions, and the underlying text are unchanged.

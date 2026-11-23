@@ -140,8 +140,10 @@ const DEFAULT_CARD_HIGHLIGHT_COLOR = 0x78deff;
 const DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR = 0xe8f7ff;
 const CARD_APPEARANCE = {
   light: { world: graphPanelTheme("light").background, body: 0xf8fafc, inactive: 0xe9eef4, bodyText: 0x30465f, border: 0x73889e,
+    notesTrack: 0xdce8f3, notesThumb: 0x506f8d,
     rule: "#d5dfe9", selected: 0x305477, hover: 0x537ea3, ...GRAPH_CAPTION_PALETTE.light },
   dark: { world: graphPanelTheme("dark").background, body: 0x192636, inactive: 0x15202d, bodyText: 0xd4dfeb, border: 0x748aa4,
+    notesTrack: 0x344c64, notesThumb: 0xa9c7e3,
     rule: "#3c5066", selected: 0x96b9d9, hover: 0x718da8, ...GRAPH_CAPTION_PALETTE.dark },
 };
 const GRAPH_NODE_TITLE_FONT_FAMILY = "monospace";
@@ -339,6 +341,7 @@ export function projectPlanarGraphPositionsToSphere({
  * @param {(edge: object) => string | null} [options.getEdgeLabel] Edge-label accessor.
  * @param {"light" | "dark" | null} [options.appearanceMode] Explicit card/caption mode. Omit to inherit the native owning scene's mode; pass null for legacy styling.
  * @param {(edge: object) => string} [options.getEdgeSelectionKey] Edge-selection key accessor used by setSelectedEdgeKey.
+ * @param {boolean} [options.enableSavedBodyScroll] Render a scrollbar for overflowing authored card bodies and expose an input target via getBodyScrollTarget.
  * @param {CardGraphSceneSphereOptions} [options.sphere] Sphere-layout overrides.
  * @returns {{ root: any, graph: { nodes: Array<object>, edges: Array<object> }, nodeHitTargets: Array<any>, portHitTargets: Array<any>, edgeHitTargets: Array<any>, actionHandleHitTargets: Array<any>, getNodeIds: () => Array<string>, getNodeById: (nodeId: string) => object | null, getNodeMeshById: (nodeId: string) => any, setSelectedIds: (nextIds: Array<string> | Set<string> | null | undefined) => void, setSelectedEdgeKey: (nextKey: string | null | undefined) => void, setHoveredId: (nextId: string | null | undefined) => void, getFlatBounds: (targetBox?: any) => any, getNodeFlatPosition: (nodeId: string) => any, translateFlatPositions: (nodeIds: Array<string> | Set<string>, delta: any) => void, setLayoutMode: (nextMode: string) => void, getLayoutMode: () => string, syncNode: (nodeId: string | null | undefined) => void, update: (dt?: number) => void, dispose: () => void }} Shared graph-scene controller.
  * Side effects: allocates card textures, card/port/edge meshes, adds the root group to the supplied scene parent, mutates geometry when nodes move, and disposes all created resources when torn down.
@@ -354,6 +357,7 @@ export function createCardGraphScene({
   layoutMode = "flat",
   style = {},
   appearanceMode,
+  enableSavedBodyScroll = false,
   getNodeTitle = (node) => String(node?.name ?? node?.label ?? node?.id ?? "Node"),
   getNodeLeadingBadge = () => null,
   getNodeSubtitle = (node) => String(node?.connector ?? node?.type ?? node?.kind ?? ""),
@@ -530,6 +534,7 @@ export function createCardGraphScene({
       Text,
       node,
       appearance,
+      enableSavedBodyScroll,
       cardWidth,
       cardHeight,
       cardCanvasWidth,
@@ -703,6 +708,19 @@ export function createCardGraphScene({
     for (let object = mesh; object; object = object.parent) if (!object.visible) return null;
     const surface = getGraphSceneEditSurface(mesh, "body");
     return surface ? { kind: "node", id: nodeId, node: record.node, field: "body", surface } : null;
+  }
+
+  function getBodyScrollTarget(nodeId) {
+    const record = nodeRecords.get(nodeId);
+    const target = getBodyOverflowTarget(nodeId);
+    const scroll = record?.bodyScroll;
+    if (!target || !scroll?.track.visible || !record.textMeshes.bodyText?.visible) return null;
+    return { ...target, railX: scroll.track.position.x,
+      railWidth: scroll.track.scale.x, railTop: scroll.top, railBottom: scroll.bottom,
+      fraction: scroll.offset / scroll.max,
+      thumbFraction: scroll.thumb.scale.y / scroll.track.scale.y,
+      scrollBy: fraction => { scroll.offset = Math.max(0, Math.min(scroll.max, scroll.offset + fraction * (scroll.top - scroll.bottom))); paintBodyScroll(record); },
+      scrollTo: fraction => { scroll.offset = Math.max(0, Math.min(1, fraction)) * scroll.max; paintBodyScroll(record); } };
   }
 
   function resolveLayoutPosition(nodeId) {
@@ -1228,6 +1246,9 @@ export function createCardGraphScene({
       ? false
       : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true);
     applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
+    for (const item of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
+      applyObjectDepthSettings(item, cardDepthTest, false);
+    }
 
     for (const textMesh of Object.values(record.textMeshes ?? {})) {
       if (!textMesh) continue;
@@ -1266,6 +1287,10 @@ export function createCardGraphScene({
     record.textRoot.renderOrder = renderBase;
     record.shadowMesh.renderOrder = renderBase + 1;
     record.cardMesh.renderOrder = renderBase + 2;
+    if (record.bodyScroll) {
+      record.bodyScroll.track.renderOrder = renderBase + 2.43;
+      record.bodyScroll.thumb.renderOrder = renderBase + 2.44;
+    }
     for (const textMesh of Object.values(record.textMeshes ?? {})) {
       if (!textMesh) continue;
       const baseRenderOrder = Number(textMesh.userData?.graphBaseRenderOrder);
@@ -1589,6 +1614,7 @@ export function createCardGraphScene({
     getNodeById,
     getNodeMeshById,
     getBodyOverflowTarget,
+    getBodyScrollTarget,
     bringNodeIdsToFront,
     setSelectedIds,
     setSelectedEdgeKey,
@@ -1637,6 +1663,7 @@ export function createCardGraphScene({
 
 function createNodeRecord({
   THREE,
+  enableSavedBodyScroll,
   Text,
   node,
   appearance,
@@ -1773,6 +1800,8 @@ function createNodeRecord({
 
   const record = {
     node,
+    THREE,
+    enableSavedBodyScroll,
     appearance,
     root,
     canvas,
@@ -2137,6 +2166,53 @@ function createActionHandle({ THREE, node, role, x, y, z, radius, color }) {
   return { role, mesh, radius, baseColor: color, homePosition: mesh.position.clone() };
 }
 
+function paintBodyScroll(record) {
+  const bar = record.bodyScroll;
+  const body = record.textMeshes.bodyText;
+  if (!bar || !body) return;
+  const layout = body.userData.graphBodyFlow;
+  const shown = !!layout?.overflow && bar.max > 0;
+  bar.track.visible = bar.thumb.visible = shown;
+  if (!shown) return;
+  body.position.y = bar.top + bar.offset;
+  body.clipRect = [0, bar.bottom - bar.top - bar.offset, bar.textWidth, -bar.offset];
+  const height = bar.top - bar.bottom;
+  const thumbHeight = Math.max(height * 0.12, height * height / (height + bar.max));
+  bar.thumb.scale.set(bar.track.scale.x * 0.67, thumbHeight, 1);
+  bar.thumb.position.y = bar.top - thumbHeight / 2 - (height - thumbHeight) * bar.offset / bar.max;
+}
+
+function setBodyScroll(record, widthPx, bodyTop, bodyBottom, textWidth, max) {
+  const body = record.textMeshes.bodyText;
+  let bar = record.bodyScroll;
+  if (!bar && max > 0) {
+    const make = kind => {
+      const mesh = new record.THREE.Mesh(new record.THREE.PlaneGeometry(1, 1),
+        new record.THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, depthTest: record.cardMesh.material.depthTest }));
+      mesh.name = `card-notes-${kind}:${record.node.id}`;
+      mesh.renderOrder = record.cardMesh.renderOrder + (kind === "track" ? 0.43 : 0.44);
+      record.root.add(mesh);
+      return mesh;
+    };
+    bar = record.bodyScroll = { track: make("track"), thumb: make("thumb"), offset: 0 };
+  }
+  if (!bar) return;
+  const top = pxToCardLocalY(record, bodyTop);
+  const bottom = pxToCardLocalY(record, bodyBottom);
+  const x = pxToCardLocalX(record, widthPx - 48);
+  bar.track.material.color.setHex(record.appearance?.notesTrack ?? 0x344c64);
+  bar.thumb.material.color.setHex(record.appearance?.notesThumb ?? 0xa9c7e3);
+  bar.track.position.set(x, (top + bottom) / 2, 0.030);
+  bar.thumb.position.set(x, top, 0.033);
+  bar.track.scale.set(pxToCardWorldSize(record, 59), top - bottom, 1);
+  Object.assign(bar, { top, bottom, max, textWidth, offset: Math.min(max, bar.offset) });
+  if (max === 0) {
+    body.position.y = top;
+    body.clipRect = [0, bottom - top, textWidth, 0];
+  }
+  paintBodyScroll(record);
+}
+
 function updateCardTexture({
   record,
   getNodeTitle,
@@ -2369,6 +2445,7 @@ function updateCardTexture({
     const lineHeight = bodyLineGapPx / bodyFontSizePx;
     // CSS canvas units are only a fast first estimate. Neither the canvas font
     // nor its x/y aspect is necessarily the one used by the Troika renderer.
+    const railGutter = record.enableSavedBodyScroll && bodyText ? pxToCardWorldSize(record, 82) : 0;
     const initialWidth = textWidthWorld / fontWorld * bodyFontSizePx;
     const flow = (maxWidth, bodyHeight = bodyBottom - bodyTop) => {
       ctx.save();
@@ -2386,9 +2463,10 @@ function updateCardTexture({
       }
     };
     const nativeBody = bodyMesh instanceof TroikaText;
-    const key = JSON.stringify([prose, Boolean(bodyText), bodyFont, bodyMesh?.font, bodyMesh?.unicodeFontsURL,
+    const key = JSON.stringify([prose, Boolean(bodyText), railGutter, bodyFont, bodyMesh?.font, bodyMesh?.unicodeFontsURL,
       fontWorld, lineHeight, initialWidth, textHeightWorld]);
     if (bodyMesh && bodyMesh.userData.graphBodyFlow?.key !== key) {
+      if (record.bodyScroll && record.bodyScroll.prose !== prose) record.bodyScroll.offset = 0;
       const layout = { key, ...(nativeBody ? { text: "", overflow: false } : flow(initialWidth)) };
       bodyMesh.userData.graphBodyFlow = layout;
       // Validate the actual glyph paths, including fallback fonts and final-line
@@ -2410,10 +2488,37 @@ function updateCardTexture({
             verify(right > textWidthWorld ? maxWidth * Math.min(0.94, textWidthWorld / right) : maxWidth,
               bottom < -textHeightWorld ? bodyHeight - bodyLineGapPx : bodyHeight, attempt + 1);
           } else {
+            if (overflow && railGutter > 0) {
+              const verifyScrollable = (available, tries = 0) => {
+                const full = flow(available, Infinity).text;
+                if (!full || tries > 12) return;
+                getTextRenderInfo({
+                  text: full, font: bodyMesh.font, unicodeFontsURL: bodyMesh.unicodeFontsURL,
+                  fontSize: fontWorld, lineHeight, anchorX: "left", anchorY: "top", whiteSpace: "nowrap",
+                  sdfGlyphSize: bodyMesh.sdfGlyphSize, sdfExponent: bodyMesh.sdfExponent,
+                }, ({ visibleBounds }) => {
+                  if (bodyMesh.userData.graphBodyFlow !== layout || !bodyMesh.parent) return;
+                  const [, glyphBottom, glyphRight] = visibleBounds;
+                  const innerWidth = textWidthWorld - railGutter;
+                  if (glyphRight > innerWidth) {
+                    verifyScrollable(available * Math.min(0.94, innerWidth / glyphRight), tries + 1);
+                    return;
+                  }
+                  Object.assign(layout, { text: full, overflow: true, scrollMax: Math.max(0, -glyphBottom - textHeightWorld), textWidth: innerWidth });
+                  bodyMesh.text = full;
+                  bodyMesh.sync();
+                  setBodyScroll(record, width, bodyTop, bodyBottom, innerWidth, layout.scrollMax);
+                  if (record.bodyScroll) record.bodyScroll.prose = prose;
+                });
+              };
+              verifyScrollable((textWidthWorld - railGutter) / fontWorld * bodyFontSizePx);
+              return;
+            }
             layout.text = candidate;
             layout.overflow = overflow;
             bodyMesh.text = candidate;
             bodyMesh.sync();
+            if (record.bodyScroll) setBodyScroll(record, width, bodyTop, bodyBottom, textWidthWorld, 0);
           }
         });
       };
@@ -2437,8 +2542,12 @@ function updateCardTexture({
       anchorY: "top",
     });
     if (nativeBody) bodyMesh.visible = true;
+    const activeFlow = bodyMesh?.userData.graphBodyFlow;
+    if (record.bodyScroll) setBodyScroll(record, width, bodyTop, bodyBottom,
+      activeFlow?.textWidth ?? textWidthWorld, activeFlow?.scrollMax ?? 0);
   } else if (record.textMeshes.bodyText) {
     delete record.textMeshes.bodyText.userData.graphBodyFlow;
+    if (record.bodyScroll) setBodyScroll(record, width, bodyTop, bodyBottom, 0, 0);
   }
 
   if (shape === "card" && bodyStrip) {
@@ -2737,6 +2846,10 @@ function applyEdgeLabelAppearance(THREE, label, appearance) {
 }
 
 function disposeNodeRecord(record) {
+  for (const rail of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
+    rail?.geometry.dispose();
+    rail?.material.dispose();
+  }
   for (const textMesh of Object.values(record.textMeshes ?? {})) {
     disposeGraphTroikaText(textMesh);
   }
