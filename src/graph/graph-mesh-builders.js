@@ -2,6 +2,7 @@
 // Pure mesh-building and highlighting utilities for graph scenes.
 
 import { Text as TroikaText } from "troika-three-text";
+import { setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
 
 import {
   HUD_TEXT_DEFAULT_COLOR,
@@ -428,6 +429,9 @@ export function createBillboardTextLabel({
   labelText.userData.graphTextRole = textRole;
   group.add(labelText);
   setGraphTroikaText(labelText, { text, x: 0, y: 0, z: 0.01 });
+  if (editTarget && typeof editTarget === "object") {
+    setGraphSceneEditSurface(backgroundMesh, editTarget.field ?? "label", null, labelText);
+  }
 
   group.scale.set(uniformScale, uniformScale, uniformScale);
   group.userData.backgroundMesh = backgroundMesh;

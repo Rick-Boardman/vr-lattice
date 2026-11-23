@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { resolveGraphSceneEditTarget, selectPreferredGraphHit } from "../src/graph/picking.js";
+import { setGraphSceneEditSurface } from "../src/graph/scene-edit-surfaces.js";
 
 const node = { id: "task" };
 const graphHit = { kind: "node", id: "task", node };
@@ -34,12 +35,18 @@ test("a rotated or curved-world card still resolves the same physical header and
   group.position.set(4, -5, 2);
   const plane = new THREE.Mesh(new THREE.PlaneGeometry(8, 4));
   plane.userData = card.userData;
+  const localBounds = { left: -3, bottom: -1.8, right: 3, top: 0.9 };
+  const authoredText = new THREE.Object3D();
+  setGraphSceneEditSurface(plane, "body", localBounds, authoredText);
   group.add(plane);
   group.updateMatrixWorld(true);
   for (const [y, field] of [[1.5, "title"], [-0.8, "body"]]) {
     const source = plane.localToWorld(new THREE.Vector3(0, y, 8));
     const point = plane.localToWorld(new THREE.Vector3(0, y, 0));
     const ray = new THREE.Raycaster(source, point.sub(source).normalize());
-    assert.equal(resolveGraphSceneEditTarget(ray.intersectObject(plane)).field, field);
+    const target = resolveGraphSceneEditTarget(ray.intersectObject(plane), null, { includeSurface: true });
+    assert.equal(target.field, field);
+    if (field === "body") assert.deepEqual(target.surface, { mesh: plane, localBounds, textMesh: authoredText });
   }
+  assert.doesNotThrow(() => plane.toJSON());
 });

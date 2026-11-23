@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { findGraphSceneAppearance } from "./scene-appearance.js";
+import { setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
 import { GRAPH_CAPTION_PALETTE, graphContrastColor } from "./appearance-contrast.js";
 import { graphPanelTheme } from "./panel-theme.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
@@ -2165,6 +2166,10 @@ function updateCardTexture({
   clearNodeTextMeshes(record);
 
   if (shape !== "card") {
+    setGraphSceneEditSurface(record.cardMesh, "title", {
+      left: -record.shapeHalfWidth * 0.58, right: record.shapeHalfWidth * 0.58,
+      bottom: -record.shapeHalfHeight * 0.43, top: record.shapeHalfHeight * 0.43,
+    }, record.textMeshes.shapeTitleText);
     const decoratedShapeTexture = shouldUseDecoratedShapeTexture(shape);
     ctx.clearRect(0, 0, width, height);
     if (decoratedShapeTexture) {
@@ -2259,6 +2264,22 @@ function updateCardTexture({
   // Ray intersections are expressed in the original panel UV coordinates in
   // both planar and spherical arrangements; v=1 is the top of the texture.
   record.cardMesh.userData.graphEditRegion.bodyThreshold = 1 - Math.min(headerHeight, height) / height;
+  const editBounds = (leftPx, topPx, rightPx, bottomPx) => ({
+    left: pxToCardLocalX(record, leftPx),
+    top: pxToCardLocalY(record, topPx),
+    right: pxToCardLocalX(record, rightPx),
+    bottom: pxToCardLocalY(record, bottomPx),
+  });
+  const titleTop = GRAPH_NODE_CARD_TITLE_TOP_PX;
+  const titleBottom = Math.min(headerHeight - 4, titleTop + titleBlockHeight + titleFontSizePx * 0.2);
+  setGraphSceneEditSurface(record.cardMesh, "title",
+    editBounds(36, titleTop, 36 + titleMaxWidth, titleBottom), record.textMeshes.titleText);
+  const bodyTop = Math.min(height * 0.85, headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55)));
+  const bodyBottom = Math.max(bodyTop + 1, bodyStrip
+    ? height - stripBottomPaddingPx - Math.max(28, Math.round(stripFontSizePx * 2))
+    : height - 24);
+  setGraphSceneEditSurface(record.cardMesh, "body",
+    editBounds(36, bodyTop, width - 36, bodyBottom), record.textMeshes.bodyText);
 
   drawRoundedRect(ctx, 0, 0, width, height, radius, toCssColor(body));
   if (!appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);

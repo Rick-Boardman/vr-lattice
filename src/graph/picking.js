@@ -2,6 +2,8 @@
 // Shared picking helpers for graph scenes.
 // Goal: de-duplicate desktop + XR selection/hover wiring without changing UX.
 
+import { getGraphSceneEditSurface } from "./scene-edit-surfaces.js";
+
 function getGraphHit(entry) {
   return entry?.object?.userData?.graphHit ?? null;
 }
@@ -155,7 +157,7 @@ function isVisibleEditHit(entry) {
  * preferred hit (if already computed) so ports and handles keep precedence.
  * A card's body remains a hit region even when its text is currently empty.
  */
-export function resolveGraphSceneEditTarget(hits = [], preferredGraphHit = undefined) {
+export function resolveGraphSceneEditTarget(hits = [], preferredGraphHit = undefined, { includeSurface = false } = {}) {
   if (!Array.isArray(hits)) return null;
   const visible = hits.filter(isVisibleEditHit);
   const preferred = preferredGraphHit ?? selectPreferredGraphHit(visible);
@@ -166,11 +168,15 @@ export function resolveGraphSceneEditTarget(hits = [], preferredGraphHit = undef
     if (!region) return null;
     const isBody = region.shape === "card" && Number.isFinite(region.bodyThreshold)
       && Number.isFinite(entry.uv?.y) && entry.uv.y < region.bodyThreshold;
-    return { kind: "node", id: preferred.id, node: preferred.node, field: isBody ? "body" : "title" };
+    const field = isBody ? "body" : "title";
+    const target = { kind: "node", id: preferred.id, node: preferred.node, field };
+    return includeSurface ? { ...target, surface: getGraphSceneEditSurface(entry.object, field) } : target;
   }
   for (const entry of visible) {
     const target = entry.object.userData?.graphEditTarget;
-    if (target?.kind === "edge" || target?.kind === "label") return target;
+    if (target?.kind === "edge" || target?.kind === "label") {
+      return includeSurface ? { ...target, surface: getGraphSceneEditSurface(entry.object, target.field ?? "label") } : target;
+    }
   }
   return null;
 }
