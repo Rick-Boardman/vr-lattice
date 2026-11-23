@@ -4,6 +4,7 @@
  * Colours are the Halo "business" theme's family; change them here and every board follows.
  */
 export const BUSINESS_BOARD_HUD_THEME = "business";
+export { createGraphPalette, createGraphPaletteDisclosureTextures } from "./palette.js";
 
 /** Spread into `createCardGraphScene({ style })`: straight connections from outline to outline. */
 export const BUSINESS_BOARD_SCENE_STYLE = Object.freeze({
