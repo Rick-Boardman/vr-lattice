@@ -50,11 +50,15 @@ export function deriveNetworkView(model, { all = false, groupId = null, nodeId =
   const nodeIds = new Set([...model.ids].filter(id => owner(id) === id));
   const selected = new Set(groupId != null ? model.groups.get(groupId) : nodeId ? [nodeId, ...(model.children.get(nodeId) ?? [])] : []);
   const visibleKeys = new Set([...selected].map(owner));
+  const groupFocus = !all && focused && groupId != null && selected.size > 0;
   const overview = !all && selected.size === 0 && model.options.summarizeOverview === true && model.groups.size > 1;
   const raw = [], aggregated = new Map();
   for (const edge of model.edges) {
     const [a, b] = endpoints(edge);
     if (!all && selected.size && !selected.has(a) && !selected.has(b)) continue;
+    // Focusing a group is a scoped view, not the group's entire first-degree
+    // neighborhood. A single well-connected org could otherwise fill the board.
+    if (groupFocus && (!selected.has(a) || !selected.has(b))) continue;
     let from = owner(a), to = owner(b);
     if (focused) { visibleKeys.add(from); visibleKeys.add(to); }
     if (from === to && a !== b) continue;

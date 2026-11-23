@@ -17,6 +17,10 @@ test("overview aggregates only real cross-group endpoints; All restores every or
   assert.deepEqual(selected.raw, [data.edges[0],data.edges[1],data.edges[4]]);
   const group = deriveNetworkView(model, { groupId:"two" });
   assert.deepEqual(group.raw, [data.edges[1],data.edges[2],data.edges[3]]);
+  const groupFocus = deriveNetworkView(model, { groupId:"two", focused:true });
+  assert.deepEqual([...groupFocus.nodeIds], ["c","d"]);
+  assert.deepEqual(groupFocus.raw, [data.edges[3]]);
+  assert.deepEqual(groupFocus.aggregated, []);
   const all = deriveNetworkView(model, { all:true, nodeId:"a" });
   assert.deepEqual(all.raw, data.edges);
   assert.equal(all.raw[0], data.edges[0]);

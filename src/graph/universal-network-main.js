@@ -893,6 +893,7 @@ export async function runUniversalNetworkScene(config) {
     ];
     const represented = visibleView?.aggregated.reduce((sum, edge) => sum + edge.count, 0) ?? 0;
     if (represented) rows.push({ text: `${represented} links in ${visibleView.aggregated.length} grouped paths` });
+    if (focused && selectedGroup != null) rows.push({ text: "Group members and internal links only" });
     if (title) rows.push(action(title, "Focus", focusNetworkSelection));
     const children = networkModel.children.get(selectedNodeId);
     if (children?.length) {
