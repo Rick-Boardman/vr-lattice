@@ -1119,6 +1119,15 @@ export function createCardGraphScene({
         record.cardMesh.scale.setScalar(1);
         continue;
       }
+      if (appearance) {
+        paintThemedCompactNode(record, baseAccent, baseBorder,
+          isSelected ? appearance.selected : isHovered ? appearance.hover : appearance.border);
+        record.shadowMesh.visible = false;
+        record.shadowMesh.scale.setScalar(1);
+        record.cardMesh.scale.setScalar(1);
+        record.labelMesh?.scale?.setScalar(1);
+        continue;
+      }
       if (record.shape === "diamond") {
         // Paint inside the actual face rather than scaling a same-colored mesh
         // behind it; the hit surface and connector geometry must stay put.
@@ -1372,6 +1381,7 @@ export function createCardGraphScene({
     for (const record of nodeRecords.values()) {
       record.appearance = next;
       record.cardStrokeColor = null;
+      record.compactOutline = null;
       if (record.texture.colorSpace !== THREE.SRGBColorSpace) record.texture.colorSpace = THREE.SRGBColorSpace;
       redrawNode(record);
     }
@@ -2337,7 +2347,11 @@ function updateCardTexture({
     }, record.textMeshes.shapeTitleText);
     const decoratedShapeTexture = shouldUseDecoratedShapeTexture(shape);
     ctx.clearRect(0, 0, width, height);
-    if (shape === "diamond") {
+    if (appearance) {
+      const stroke = record.compactOutline?.color ?? appearance.border;
+      record.compactOutline = null;
+      paintThemedCompactNode(record, accent, border, stroke);
+    } else if (shape === "diamond") {
       record.diamondBorderKey = null;
       paintDiamondBorder(record, accent, border);
     } else if (decoratedShapeTexture) {
@@ -2361,7 +2375,7 @@ function updateCardTexture({
       record.cardMesh.material.color.setHex(accent);
     }
     record.cardMesh.material.needsUpdate = true;
-    record.shadowMesh.visible = shape !== "diamond" && !decoratedShapeTexture;
+    record.shadowMesh.visible = !appearance && shape !== "diamond" && !decoratedShapeTexture;
     record.shadowMesh.material.color.setHex(border);
     record.shadowMesh.material.opacity = 1;
     record.shadowMesh.material.needsUpdate = true;
@@ -2677,10 +2691,14 @@ function updateCardTexture({
   texture.needsUpdate = true;
 }
 
+function worldCardOutlineWidthPx(canvas) {
+  return Math.max(7, Math.min(13, canvas.height * 0.013));
+}
+
 function paintThemedCardBorder(record, color) {
   const { canvas, texture } = record;
   const ctx = canvas.getContext("2d");
-  const thickness = Math.max(7, Math.min(13, canvas.height * 0.013));
+  const thickness = worldCardOutlineWidthPx(canvas);
   const inset = 1.5 + thickness * 0.5;
   ctx.strokeStyle = toCssColor(color);
   ctx.lineWidth = thickness;
@@ -3152,6 +3170,84 @@ function resolveEdgeVisualStyle(edge) {
   return "arrow";
 }
 
+// Trace the outer edges of the actual hit geometry. Using local graph units
+// preserves perceptual weight on both axes of stretched ellipses and on diagonals.
+function compactOutlinePath(geometry) {
+  const position = geometry.getAttribute("position");
+  const triangles = geometry.index?.array ?? Array.from({ length: position.count }, (_, i) => i);
+  const points = new Map();
+  const edges = new Map();
+  const pointKey = (index) => {
+    const x = position.getX(index);
+    const y = position.getY(index);
+    const key = `${Math.round(x * 1e6)}:${Math.round(y * 1e6)}`;
+    if (!points.has(key)) points.set(key, [x, y]);
+    return key;
+  };
+  for (let i = 0; i + 2 < triangles.length; i += 3) {
+    const keys = [pointKey(triangles[i]), pointKey(triangles[i + 1]), pointKey(triangles[i + 2])];
+    if (new Set(keys).size !== 3) continue;
+    for (let j = 0; j < 3; j += 1) {
+      const from = keys[j];
+      const to = keys[(j + 1) % 3];
+      const edge = from < to ? `${from}/${to}` : `${to}/${from}`;
+      if (edges.has(edge)) edges.delete(edge);
+      else edges.set(edge, [from, to]);
+    }
+  }
+  const next = new Map(edges.values());
+  const path = new Path2D();
+  while (next.size) {
+    const start = next.keys().next().value;
+    path.moveTo(...points.get(start));
+    let from = start;
+    while (next.has(from)) {
+      const to = next.get(from);
+      next.delete(from);
+      path.lineTo(...points.get(to));
+      from = to;
+    }
+    path.closePath();
+  }
+  return path;
+}
+
+function paintThemedCompactNode(record, accent, decorativeColor, color) {
+  const { canvas, texture, cardMesh, shape } = record;
+  if (record.compactOutline?.accent === accent && record.compactOutline.color === color
+    && record.compactOutline.decorativeColor === decorativeColor) return;
+  record.compactOutline = { accent, color, decorativeColor };
+
+  const { width, height } = canvas;
+  const ctx = canvas.getContext("2d");
+  const fill = toCssColor(accent);
+  if (shouldUseDecoratedShapeTexture(shape)) {
+    drawShapeNodeTexture({ ctx, width, height, shape, fill, border: toCssColor(decorativeColor),
+      drawTitle: false, drawOuterBorder: false });
+  } else {
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, width, height);
+  }
+  const geometry = cardMesh.geometry;
+  geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox;
+  const scaleX = width / (max.x - min.x);
+  const scaleY = height / (max.y - min.y);
+  const worldCardHeight = record.shapeHalfHeight * 2 / NODE_SHAPE_METRICS[shape].heightScale;
+  const thickness = worldCardOutlineWidthPx(canvas) * worldCardHeight / height;
+  ctx.save();
+  ctx.setTransform(scaleX, 0, 0, -scaleY, -min.x * scaleX, max.y * scaleY);
+  ctx.lineWidth = 2 * thickness; // The exact face clips the other half.
+  ctx.lineJoin = "miter";
+  ctx.strokeStyle = toCssColor(color);
+  record.compactOutlinePath ??= compactOutlinePath(geometry);
+  ctx.stroke(record.compactOutlinePath);
+  ctx.restore();
+  cardMesh.material.map = texture;
+  cardMesh.material.color.setHex(0xffffff);
+  texture.needsUpdate = true;
+}
+
 function paintDiamondBorder(record, accent, border, state = "normal") {
   const { appearance, canvas, cardMesh, texture } = record;
   const selected = state === "selected";
@@ -3193,6 +3289,7 @@ function drawShapeNodeTexture({
   textColor,
   textOutline,
   drawTitle = true,
+  drawOuterBorder = true,
 }) {
   const resolvedShape = normalizeNodeShape(shape);
   ctx.fillStyle = fill;
@@ -3201,8 +3298,15 @@ function drawShapeNodeTexture({
   ctx.save();
   ctx.lineWidth = 8;
   ctx.strokeStyle = border;
-  traceShapeTexturePath(ctx, resolvedShape, width, height, 0);
-  ctx.stroke();
+  if (drawOuterBorder) {
+    traceShapeTexturePath(ctx, resolvedShape, width, height, 0);
+    ctx.stroke();
+  } else if (resolvedShape === "cylinder") {
+    const { centerX, topCenterY, halfWidth, capRadiusY } = resolveCylinderProfile(width, height);
+    ctx.beginPath();
+    ctx.ellipse(centerX, topCenterY, halfWidth, capRadiusY, 0, 0, Math.PI);
+    ctx.stroke();
+  }
 
   if (resolvedShape === "subroutine") {
     const insetX = width * 0.14;
