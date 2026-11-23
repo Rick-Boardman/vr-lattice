@@ -17,6 +17,42 @@ try{
  const stats=await page.evaluate(()=>({nodes:globalThis.__latticeExample.graph.nodes.length,edges:globalThis.__latticeExample.graph.edges.length,calls:globalThis.__latticeExample.ctx.renderer.info.render.calls}));
  if(stats.nodes!==3||stats.edges!==2||stats.calls<1)throw new Error("Graph did not render");
  await mkdir(path.join(root,"dist/shots"),{recursive:true});
+ async function assertScenePixels(target, expected) {
+  // Sample several open areas of the composited viewport, not the Three.js state.
+  for (const [x,y] of [[640,160],[32,600],[1248,600]]) {
+   const png=await target.screenshot({clip:{x,y,width:1,height:1}});
+   const rgba=await target.evaluate(async url=>{
+    const img=new Image(); img.src=url; await img.decode();
+    const c=new OffscreenCanvas(1,1).getContext("2d"); c.drawImage(img,0,0);
+    return [...c.getImageData(0,0,1,1).data];
+   },"data:image/png;base64,"+png.toString("base64"));
+   assert.deepEqual(rgba,[...expected,255],`Scene background pixel (${x},${y})`);
+  }
+ }
+ const freshLight=await browser.newPage({viewport:{width:1280,height:800},colorScheme:"light"});
+ await freshLight.goto(origin+"/examples/graph/");
+ await freshLight.waitForFunction(()=>globalThis.__latticeExample?.ctx.renderer.info.render.calls>0);
+ const lightState=await freshLight.evaluate(()=>{const c=globalThis.__latticeExample.ctx;return [c.panelTheme,c.scene.background.getHex(),c.scene.fog.color.getHex()];});
+ assert.deepEqual(lightState,["light",0xe7edf5,0xe7edf5]);
+ await assertScenePixels(freshLight,[231,237,245]);
+ const compatibility=await freshLight.evaluate(async()=>{
+  const [{createGraphSceneContext},THREE]=await Promise.all([import("/src/graph/index.js"),import("three")]);
+  const colors=c=>[c.scene.background.getHex(),c.scene.fog?.color.getHex()??null,c.scene.fog?.near??null,c.scene.fog?.far??null];
+  const opts={background:0x08131d,fogColor:0x0a0e27,fogNear:23,fogFar:102};
+  const boot=(theme,scene)=>createGraphSceneContext({THREE,canvas:document.createElement("canvas"),hud:{theme},scene});
+  const custom=boot({key:"business",titleBarColor:0x506070},opts);
+  const defaultContext=boot(undefined,opts);
+  const noFog=boot("light",{...opts,fog:false});
+  try {
+   const before=colors(custom),legacy=colors(defaultContext);
+   custom.setPanelTheme("light"); noFog.setPanelTheme("dark");
+   return {before,legacy,optedIn:colors(custom),noFog:colors(noFog)};
+  } finally { custom.dispose(); defaultContext.dispose(); noFog.dispose(); }
+ });
+ const legacy=[0x08131d,0x0a0e27,23,102];
+ assert.deepEqual(compatibility,{before:legacy,legacy,optedIn:[0xe7edf5,0xe7edf5,23,102],noFog:[0x0a1320,null,null,null]});
+ await freshLight.close();
+ await assertScenePixels(page,[10,19,32]);
  const snapshot = () => page.evaluate(() => {
   const ex = globalThis.__latticeExample, {ctx} = ex, hud = ctx.hudSystem.hud;
   const windows = Object.entries(hud.ui.windows).filter(([,w]) => w.y >= 0).map(([key,w]) => ({key,x:w.x,y:w.y,w:w.w,h:w.collapsed?28:w.h,collapsed:w.collapsed}));
@@ -78,8 +114,11 @@ try{
  assert.equal(switching.fog,0xe7edf5);
  assert.equal((await snapshot()).selected,"transform");
  await page.waitForTimeout(350);
+ await assertScenePixels(page,[231,237,245]);
  await page.screenshot({path:path.join(root,"dist/shots/graph-light.png")});
  await page.evaluate(()=>globalThis.__latticeExample.ctx.setPanelTheme("dark"));
+ await assertScenePixels(page,[10,19,32]);
+ console.log("PASS legacy dark world overridden at Light startup and live switching");
  // A drag must rotate without acting as a click that changes selection.
  await page.mouse.move(650,550);await page.mouse.down();await page.mouse.move(710,575,{steps:4});await page.mouse.up();
  assert.equal((await snapshot()).selected,"transform");

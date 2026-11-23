@@ -16,6 +16,7 @@ const graph = toCanonicalGraph({
 const appearance = { storageKey: "lattice:example:appearance" };
 const ctx = createGraphSceneContext({
   THREE, canvas: document.getElementById("c"),
+  scene: { background: 0x08131d, fogColor: 0x0a0e27 },
   hud: {
     theme: resolveGraphPanelTheme(appearance),
     uiPreset: "minimal", visibleWindowKeys: ["hotbar"],

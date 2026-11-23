@@ -85,8 +85,10 @@ Pass `hud: { theme: "light" }` or `hud: { theme: "dark" }` when creating a
 graph context. Switch an existing scene with `ctx.setPanelTheme("dark")`;
 `ctx.panelTheme` returns the mode and `ctx.onPanelThemeChange(callback)`
 returns an unsubscribe function. Existing panel geometry and content state
-are retained. Native modes change the default background/fog and default
-universal-network labels; explicit scene and label overrides are respected.
+are retained. Native modes own the scene background and enabled fog color,
+even if the host supplied a fixed legacy color. They preserve disabled fog,
+fog distances, and explicit universal-network label colors. Without a native
+mode, custom and legacy themes keep their configured background and fog.
 Window color overrides and textured skins are preserved. Use
 `panelTheme: false` in a window's options to opt it out entirely. Light mode
 uses a pale frame over a dark inset content surface for contrast with Halo's

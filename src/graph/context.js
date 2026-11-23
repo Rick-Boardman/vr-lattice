@@ -22,9 +22,9 @@ import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWind
  * @param {number} [options.renderer.desktopMaxPixelRatio=2] Desktop pixel-ratio cap applied by configureXrSafeRenderer.
  * @param {number} [options.renderer.oculusMaxPixelRatio=2] Oculus-browser pixel-ratio cap applied by configureXrSafeRenderer.
  * @param {object} [options.scene] Scene appearance configuration.
- * @param {number} [options.scene.background=0x0a0e27] Scene background color.
+ * @param {number} [options.scene.background=0x0a0e27] Scene background color for legacy/custom HUD themes.
  * @param {boolean} [options.scene.fog=true] Whether the scene has distance fog. A flat board that the view backs away from to fit should not: its content fades as the view widens.
- * @param {number} [options.scene.fogColor=0x0a0e27] Fog color.
+ * @param {number} [options.scene.fogColor=0x0a0e27] Fog color for legacy/custom HUD themes.
  * @param {number} [options.scene.fogNear=55] Fog near distance.
  * @param {number} [options.scene.fogFar=260] Fog far distance.
  * @param {object} [options.camera] Perspective-camera configuration.
@@ -52,7 +52,7 @@ import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWind
  * @param {number} [options.hud.hotbarSlotCount=4] Hotbar slot count forwarded to the HUD system.
  * @param {Array<unknown> | null} [options.hud.hotbarTooltips=null] Optional hotbar tooltip lines.
  * @param {boolean} [options.hud.reserveSystemHotbarSlots=true] Whether the shared debug/help hotbar tail stays reserved.
- * @param {string | object} [options.hud.theme] HUD window theme preset name or override bag ("professional" when left out); "light"/"dark" also style the default scene.
+ * @param {string | object} [options.hud.theme] HUD window theme preset name or override bag ("professional" when left out); "light"/"dark" own the scene background and enabled fog color.
  * @param {string} [options.hud.uiPreset="default"] HUD window preset string forwarded to the shared HUD bootstrap.
  * @param {Array<string> | null} [options.hud.visibleWindowKeys=null] Optional list of shared Halo panel keys that should exist for this graph scene.
  * @param {Array<string> | null} [options.hud.hiddenWindowKeys=null] Optional list of shared Halo panel keys that should start hidden.
@@ -158,8 +158,8 @@ export function createGraphSceneContext({
 
   const initialTheme = graphPanelTheme(hudTheme);
   const sceneObj = new THREE.Scene();
-  sceneObj.background = new THREE.Color(background ?? initialTheme?.background ?? 0x0a0e27);
-  sceneObj.fog = fog ? new THREE.Fog(fogColor ?? initialTheme?.background ?? 0x0a0e27, fogNear, fogFar) : null;
+  sceneObj.background = new THREE.Color(initialTheme?.background ?? background ?? 0x0a0e27);
+  sceneObj.fog = fog ? new THREE.Fog(initialTheme?.background ?? fogColor ?? 0x0a0e27, fogNear, fogFar) : null;
 
   const cameraObj = new THREE.PerspectiveCamera(
     fov,
@@ -281,8 +281,9 @@ export function createGraphSceneContext({
     if (!panelTheme) {
       panelTheme = installGraphPanelTheme(hudSystem);
       panelTheme.subscribe((theme) => {
-        if (background == null) sceneObj.background?.setHex?.(theme.background);
-        if (fogColor == null) sceneObj.fog?.color?.setHex?.(theme.background);
+        if (sceneObj.background?.isColor) sceneObj.background.setHex(theme.background);
+        else sceneObj.background = new THREE.Color(theme.background);
+        sceneObj.fog?.color?.setHex?.(theme.background);
         for (const notify of pendingThemeListeners) notify(theme);
       });
     }
