@@ -37,6 +37,7 @@ import { createGraphSettingsHotbarItem, installGraphPanelThemeControl, resolveGr
 import { graphPanelTheme } from "./panel-theme.js";
 import { createBusinessIconTextures } from "./business-icons.js";
 import { graphContrastColor } from "./appearance-contrast.js";
+import { createNetworkLabelProjector, retainNonoverlappingNetworkLabels } from "./network-label-collision.js";
 import { createNetworkViewModel, deriveNetworkView, networkGroupKey, networkFitDistance } from "./network-view.js";
 
 
@@ -510,16 +511,34 @@ export async function runUniversalNetworkScene(config) {
         _ctx.camera.getWorldPosition(_labelCamPos);
         _ctx.camera.getWorldDirection(_labelCamForward);
         _visibleOpaqueLabels.length = 0;
+        const reduceLabelOverlaps = !!networkModel && networkViewOptions.labelCollision !== false
+          && !renderer.xr?.isPresenting;
+        _projectedNetworkLabels.length = 0;
+        const labelWidth = reduceLabelOverlaps ? renderer.domElement.clientWidth : 0;
+        const labelHeight = reduceLabelOverlaps ? renderer.domElement.clientHeight : 0;
+        const selectedGroupKey = selectedGroup == null ? null : networkGroupKey(selectedGroup);
         for (const spr of [...labelSprites, ...groupLabels.values()]) {
           if (networkModel && (spr.userData.groupKey ? !visibleView?.overview : !visibleView?.nodeIds.has(spr.userData.nodeId))) {
             spr.visible = false; continue;
           }
           spr.getWorldPosition(_labelSpritePos);
           const dist = _labelCamPos.distanceTo(_labelSpritePos);
+          const isGroup = !!spr.userData.groupKey;
+          const isActive = isGroup
+            ? spr.userData.groupKey === selectedGroupKey
+            : spr.userData.nodeId === selectedNodeId || spr.userData.nodeId === hoveredNodeId;
+          const keep = isGroup || isActive;
+          if (reduceLabelOverlaps && (keep || dist <= LABEL_MAX_DISTANCE)) {
+            const rect = projectNetworkLabel(spr,_labelSpritePos,_ctx.camera,labelWidth,labelHeight);
+            if (rect) {
+              _projectedNetworkLabels.push({label:spr,rect,depth:dist,
+                protected:keep,priority:isActive ? 2 : isGroup ? 1 : 0});
+            }
+          }
           if (activePanelTheme) {
             // A themed plate is a readability surface, not a translucent
             // decoration: keep its ink and backing solid until culled together.
-            spr.visible = Boolean(spr.userData.groupKey) || dist <= LABEL_MAX_DISTANCE;
+            spr.visible = isGroup || (reduceLabelOverlaps && isActive) || dist <= LABEL_MAX_DISTANCE;
             if (spr.visible) {
               const layer = spr.userData.opaqueNetworkLayer ??= { label: spr, depth: 0 };
               layer.depth = _labelSpritePos.sub(_labelCamPos).dot(_labelCamForward);
@@ -537,6 +556,10 @@ export async function runUniversalNetworkScene(config) {
             if (backgroundMesh?.material) backgroundMesh.material.opacity = 0.35 * fade;
           }
         }
+        if (reduceLabelOverlaps) {
+          _previousNetworkLabels=retainNonoverlappingNetworkLabels(_projectedNetworkLabels,_previousNetworkLabels);
+          for (const {label} of _projectedNetworkLabels) label.visible &&= _previousNetworkLabels.has(label);
+        } else _previousNetworkLabels.clear();
         orderOpaqueNetworkBillboards(_visibleOpaqueLabels);
       }
 
@@ -645,6 +668,9 @@ export async function runUniversalNetworkScene(config) {
   const _labelCamPos = new THREE.Vector3();
   const _labelCamForward = new THREE.Vector3();
   const _visibleOpaqueLabels = [];
+  const _projectedNetworkLabels = [];
+  let _previousNetworkLabels = new Set();
+  const projectNetworkLabel = createNetworkLabelProjector(THREE);
   const _labelSpritePos = new THREE.Vector3();
 
   const pulseEffect = createNetworkPulseEffect({
