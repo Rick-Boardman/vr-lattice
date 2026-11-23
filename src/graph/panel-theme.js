@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
+const lightContent = Object.freeze({ surface: 0xf8fafc, text: 0x22354a, row: 0xf1f5f9, selectedRow: 0xd7e7f8,
+  field: 0xdde9f6, fieldText: 0x173754, accent: 0x245e96, accentText: 0xffffff, track: 0xd9e4ef, thumb: 0x738da6 });
+const darkContent = Object.freeze({ surface: 0x182536, text: 0xe9f0f9, row: 0x1c2a3d, selectedRow: 0x294b74,
+  field: 0x334b67, fieldText: 0xf1f6fc, accent: 0x2a5e93, accentText: 0xffffff, track: 0x25364a, thumb: 0x849ab4 });
+
 const common = { panelBgOpacity: 1, titleBarOpacity: 1, contentBgOpacity: 1,
   borderOpacity: 1, borderInset: 0, controlStyle: "quiet" };
 
 export const GRAPH_PANEL_THEMES = Object.freeze({
   light: Object.freeze({ ...common, key: "light", panelBgColor: 0xc5d1df,
-    titleBarColor: 0xf3f6fb, contentBgColor: 0x293a50, titleTextColor: 0x1b304a,
+    titleBarColor: 0xf3f6fb, contentBgColor: 0xf8fafc, contentTokens: lightContent, titleTextColor: 0x1b304a,
     borderColor: 0x8499b2, accentColor: 0x245b98, background: 0xe7edf5,
     labelColor: 0x17283c, labelBackgroundColor: 0xf4f7fc }),
   dark: Object.freeze({ ...common, key: "dark", panelBgColor: 0x111a26,
-    titleBarColor: 0x1c2b3e, contentBgColor: 0x182536, titleTextColor: 0xe9f1fb,
+    titleBarColor: 0x1c2b3e, contentBgColor: 0x182536, contentTokens: darkContent, titleTextColor: 0xe9f1fb,
     borderColor: 0x546c88, accentColor: 0x8dc4ff, background: 0x0a1320,
     labelColor: 0xe8f2ff, labelBackgroundColor: 0x101a29 }),
 });
@@ -25,8 +30,8 @@ export function graphPanelTheme(mode) {
 /**
  * Apply Lattice's native HUD palette to an existing Halo system. Preserve geometry,
  * list state, explicit window colors and app textures. New windows inherit the mode.
- * Halo 0.3 emits bright body text (including literal app colors), so Light uses a
- * pale frame/title and a high-contrast slate content well, not a white text surface.
+ * Older Halo builds keep a slate Light content fallback because their body text
+ * and field palettes cannot be restyled safely.
  */
 export function installGraphPanelTheme(hudSystem, initialMode) {
   const existing = installed.get(hudSystem);
@@ -35,6 +40,7 @@ export function installGraphPanelTheme(hudSystem, initialMode) {
     return existing;
   }
   const ui = hudSystem.hud.ui;
+  const supportsContentTokens = typeof hudSystem.setWindowAppearanceTokens === "function";
   const base = ui.theme ?? {};
   const create = hudSystem.createWindow;
   const values = new WeakMap();
@@ -51,7 +57,12 @@ export function installGraphPanelTheme(hudSystem, initialMode) {
       const hasPrior = Object.hasOwn(painted, field);
       if (explicitFields.get(win)?.has(field) || (hasPrior && win[field] !== prior)) continue;
       if (!explicit && !hasPrior && base[field] != null && win[field] != null && win[field] !== base[field]) continue;
-      win[field] = painted[field] = theme[field];
+      win[field] = painted[field] = field === "contentBgColor" && theme.key === "light" && !supportsContentTokens
+        ? 0x293a50 : theme[field];
+    }
+    if (supportsContentTokens) {
+      const ownsContent = win.contentBgColor === painted.contentBgColor;
+      hudSystem.setWindowAppearanceTokens(key, ownsContent ? theme.contentTokens : null);
     }
     // Halo 0.3 stores the glyphs in bright textures; tint those meshes, not the hit targets.
     if (!win._hudSkinKey && win.titleBarColor === painted.titleBarColor) {

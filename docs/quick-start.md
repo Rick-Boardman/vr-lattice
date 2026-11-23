@@ -90,9 +90,9 @@ even if the host supplied a fixed legacy color. They preserve disabled fog,
 fog distances, and explicit universal-network label colors. Without a native
 mode, custom and legacy themes keep their configured background and fog.
 Window color overrides and textured skins are preserved. Use
-`panelTheme: false` in a window's options to opt it out entirely. Light mode
-uses a pale frame over a dark inset content surface for contrast with Halo's
-bright list text. Existing custom and legacy theme selections are unchanged
+`panelTheme: false` in a window's options to opt it out entirely. Light mode uses pale panels with dark, contrast-adjusted text on Halo builds
+that expose window appearance tokens; older Halo builds retain a readable
+slate fallback for panel bodies. Existing custom and legacy theme selections are unchanged
 unless the host explicitly switches to a native mode.
 
 Use `resolveGraphPanelTheme({ storageKey })` for initial preference resolution

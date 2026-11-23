@@ -33,3 +33,24 @@ test("opt-in modes update existing chrome and keep window state, custom values a
   controller.dispose();
   assert.equal(hud.createWindow, originalCreate);
 });
+
+test("Lattice negotiates full light bodies only with compatible Halo and respects custom content", () => {
+  const build = (supportsAppearance) => {
+    const ui = {theme:{},windows:{}};
+    const hud = {hud:{ui},createWindow(key, options){ return ui.windows[key] = {...options}; }};
+    if (supportsAppearance) hud.setWindowAppearanceTokens = (key, tokens) => { ui.windows[key].tokens = tokens; };
+    return hud;
+  };
+  const halo = build(true), legacy = build(false);
+  const modernThemes = installGraphPanelTheme(halo,"light");
+  installGraphPanelTheme(legacy,"light");
+  const modern = halo.createWindow("normal");
+  const custom = halo.createWindow("custom",{contentBgColor:0xffeeee});
+  assert.equal(modern.contentBgColor,0xf8fafc);
+  assert.equal(modern.tokens.text,0x22354a);
+  assert.equal(custom.contentBgColor,0xffeeee);
+  assert.equal(custom.tokens,null);
+  assert.equal(legacy.createWindow("normal").contentBgColor,0x293a50);
+  modernThemes.setTheme("dark");
+  assert.equal(modern.tokens.text,0xe9f0f9);
+});
