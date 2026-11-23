@@ -473,6 +473,7 @@ export function createCardGraphScene({
   const nodeHitTargets = [];
   const portHitTargets = [];
   const edgeHitTargets = [];
+  const editHitTargets = [];
   const actionHandleHitTargets = [];
   const tempBox = new THREE.Box3();
   const worldStart = new THREE.Vector3();
@@ -646,11 +647,13 @@ export function createCardGraphScene({
         worldHeight: edgeLabelWorldHeight,
         minWorldWidth: edgeLabelMinWorldWidth,
         appearance,
+        editTarget: { kind: "edge", edge, field: "label" },
       })
       : null;
     if (labelSprite) {
       labelSprite.setRenderOrder?.(0.2);
       root.add(labelSprite);
+      editHitTargets.push(labelSprite.userData.backgroundMesh);
     }
 
     root.add(line);
@@ -1553,6 +1556,7 @@ export function createCardGraphScene({
     nodeHitTargets,
     portHitTargets,
     edgeHitTargets,
+    editHitTargets,
     actionHandleHitTargets,
     getNodeIds: () => graph.nodes.map((node) => node.id),
     getNodeById,
@@ -1693,6 +1697,7 @@ function createNodeRecord({
   cardMesh.userData.id = node.id;
   cardMesh.userData.node = node;
   cardMesh.userData.graphHit = { kind: "node", id: node.id, node };
+  cardMesh.userData.graphEditRegion = { shape, bodyThreshold: null };
 
   const textMeshes = createNodeTextMeshes({ Text, nodeId: node.id });
 
@@ -2251,6 +2256,9 @@ function updateCardTexture({
       + GRAPH_NODE_CARD_TITLE_BOTTOM_PADDING_PX,
     badgeLayout.topPx + badgeLayout.heightPx + 24,
   );
+  // Ray intersections are expressed in the original panel UV coordinates in
+  // both planar and spherical arrangements; v=1 is the top of the texture.
+  record.cardMesh.userData.graphEditRegion.bodyThreshold = 1 - Math.min(headerHeight, height) / height;
 
   drawRoundedRect(ctx, 0, 0, width, height, radius, toCssColor(body));
   if (!appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);
@@ -2535,6 +2543,7 @@ function createEdgeLabelSprite({
   worldHeight = DEFAULT_EDGE_LABEL_WORLD_HEIGHT,
   minWorldWidth = DEFAULT_EDGE_LABEL_MIN_WORLD_WIDTH,
   appearance = null,
+  editTarget = null,
 }) {
   const resolvedText = String(text ?? "").trim().slice(0, 64);
   const resolvedFontSizePx = Math.max(24, Number(fontSizePx) || DEFAULT_EDGE_LABEL_FONT_SIZE_PX);
@@ -2564,6 +2573,7 @@ function createEdgeLabelSprite({
     depthWrite: false,
     renderOrder: 3,
     textRole: "edge-label",
+    editTarget,
   });
   if (appearance) applyEdgeLabelAppearance(THREE, label, appearance);
   return label;

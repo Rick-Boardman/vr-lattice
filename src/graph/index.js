@@ -92,6 +92,7 @@ export {
  */
 export {
   pickClosestControlGraphHitByClientPoint,
+  resolveGraphSceneEditTarget,
   selectPreferredGraphHit,
 } from "./picking.js?v=workflow4-planning-entry-12";
 

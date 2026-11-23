@@ -141,3 +141,36 @@ export function selectPreferredGraphHit(
 
   return firstGraphHit;
 }
+
+function isVisibleEditHit(entry) {
+  for (let object = entry?.object; object; object = object.parent) {
+    if (object.visible === false) return false;
+  }
+  return Boolean(entry?.object);
+}
+
+/**
+ * Resolve a direct text-edit gesture, separate from ordinary graph selection.
+ * Include edit-only label surfaces in the edit raycast and supply the ordinary
+ * preferred hit (if already computed) so ports and handles keep precedence.
+ * A card's body remains a hit region even when its text is currently empty.
+ */
+export function resolveGraphSceneEditTarget(hits = [], preferredGraphHit = undefined) {
+  if (!Array.isArray(hits)) return null;
+  const visible = hits.filter(isVisibleEditHit);
+  const preferred = preferredGraphHit ?? selectPreferredGraphHit(visible);
+  if (isControlGraphHit(preferred)) return null;
+  if (preferred?.kind === "node") {
+    const entry = visible.find(hit => getGraphHit(hit) === preferred);
+    const region = entry?.object?.userData?.graphEditRegion;
+    if (!region) return null;
+    const isBody = region.shape === "card" && Number.isFinite(region.bodyThreshold)
+      && Number.isFinite(entry.uv?.y) && entry.uv.y < region.bodyThreshold;
+    return { kind: "node", id: preferred.id, node: preferred.node, field: isBody ? "body" : "title" };
+  }
+  for (const entry of visible) {
+    const target = entry.object.userData?.graphEditTarget;
+    if (target?.kind === "edge" || target?.kind === "label") return target;
+  }
+  return null;
+}

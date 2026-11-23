@@ -355,6 +355,7 @@ export function createBillboardTextLabel({
   depthWrite = false,
   renderOrder = 0,
   textRole = "label",
+  editTarget = null,
 } = {}) {
   const group = new THREE.Group();
   const cameraWorldQuaternion = new THREE.Quaternion();
@@ -393,6 +394,11 @@ export function createBillboardTextLabel({
         depthWrite: !!depthWrite,
       }),
     );
+  // Apps may include this surface in a separate edit raycast. No ordinary
+  // graph-hit marker is added, so a label does not change selection or dragging.
+  if (editTarget && typeof editTarget === "object") {
+    backgroundMesh.userData.graphEditTarget = { ...editTarget };
+  }
   if (borderMesh) {
     borderMesh.position.z = -0.01;
     group.add(borderMesh);
