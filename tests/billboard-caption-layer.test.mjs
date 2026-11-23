@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { createBillboardTextLabel } from "../src/graph/graph-mesh-builders.js";
+import { createBillboardTextLabel, makeLabelSpriteFactory } from "../src/graph/graph-mesh-builders.js";
 
 class TestText extends THREE.Object3D {
   sync() {}
@@ -23,5 +23,21 @@ test("billboard captions retain fractional priority above selected edge strokes"
     assert.ok(textMesh.renderOrder > backgroundMesh.renderOrder);
   } finally {
     caption.dispose();
+  }
+});
+
+test("opt-in universal network label is larger, bolder and overlays strokes", () => {
+  const make = (legible) => makeLabelSpriteFactory({THREE, Text: TestText, legible})({text: "Named network node"});
+  const legacy = make(false);
+  const native = make(true);
+  try {
+    assert.ok(native.userData.textMesh.fontSize > legacy.userData.textMesh.fontSize);
+    assert.equal(native.userData.textMesh.fontWeight, "bold");
+    assert.ok(native.userData.backgroundMesh.renderOrder > 1);
+    assert.ok(native.userData.textMesh.renderOrder > native.userData.backgroundMesh.renderOrder);
+    assert.equal(legacy.userData.backgroundMesh.renderOrder, 0);
+  } finally {
+    native.dispose();
+    legacy.dispose();
   }
 });

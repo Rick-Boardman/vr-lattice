@@ -348,6 +348,7 @@ export function createBillboardTextLabel({
   color = HUD_TEXT_DEFAULT_COLOR,
   scale = [8, 2, 1],
   font = "44px monospace",
+  fontScale = 1,
   fontUrl = HUD_TEXT_FONT_URL,
   unicodeFontsURL = HUD_TEXT_UNICODE_FONTS_URL,
   backgroundColor = 0x000000,
@@ -418,7 +419,7 @@ export function createBillboardTextLabel({
     color,
     font: fontUrl,
     unicodeFontsURL,
-    fontSize: resolveBillboardLabelLocalFontSize(fontSizePx),
+    fontSize: Math.min(0.4, resolveBillboardLabelLocalFontSize(fontSizePx) * fontScale),
     fontWeight: String(font ?? "").includes("bold") ? "bold" : undefined,
     textAlign: "center",
     anchorX: "center",
@@ -482,7 +483,7 @@ export function createBillboardTextLabel({
   return group;
 }
 
-export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512, canvasH = 128, font = "44px monospace", scale = [8, 2, 1] } = {}) {
+export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512, canvasH = 128, font = "44px monospace", scale = [8, 2, 1], legible = false } = {}) {
   return function makeLabelSprite({ text, color = "#dde3ea" } = {}) {
     return createBillboardTextLabel({
       THREE,
@@ -490,13 +491,15 @@ export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512
       text: String(text ?? "").slice(0, 48),
       color,
       scale,
-      font,
+      font: legible && !String(font).includes("bold") ? `bold ${font}` : font,
+      fontScale: legible ? 1.45 : 1,
+      outlineWidth: legible ? 0 : 0.025,
       backgroundColor: 0x000000,
       backgroundOpacity: 0.35,
       borderColor: null,
       depthTest: false,
       depthWrite: false,
-      renderOrder: 0,
+      renderOrder: legible ? 10 : 0,
       textRole: "network-label",
     });
   };

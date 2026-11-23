@@ -426,17 +426,18 @@ export async function runUniversalNetworkScene(config) {
 
   const explicitLabelColors = new WeakSet();
   const applyLabelTheme = (label, theme) => {
-    if (!theme || explicitLabelColors.has(label)) return;
+    if (!theme) return;
     const { textMesh, backgroundMesh } = label.userData;
-    if (textMesh) textMesh.color = theme.labelColor;
+    if (textMesh && !explicitLabelColors.has(label)) textMesh.color = theme.labelColor;
     if (backgroundMesh?.material) {
       backgroundMesh.material.color.setHex(theme.labelBackgroundColor);
-      backgroundMesh.material.opacity = 0.9;
+      backgroundMesh.material.opacity = 1;
     }
   };
   const makeLabelSprite = makeLabelSpriteFactory({
     THREE,
     ...(config?.render?.labelSprite || {}),
+    legible: !!prefOptions,
   });
 
   // Desktop world hover outline state (wired after ctx is created)
@@ -495,10 +496,14 @@ export async function runUniversalNetworkScene(config) {
           } else if (dist > LABEL_FADE_START) {
             spr.visible = true;
             const fade = 1 - (dist - LABEL_FADE_START) / (LABEL_MAX_DISTANCE - LABEL_FADE_START);
-            if (spr.material) spr.material.opacity = clamp(fade, 0.1, 1);
+            const {textMesh,backgroundMesh} = spr.userData;
+            if (textMesh) textMesh.fillOpacity = clamp(fade, 0.1, 1);
+            if (backgroundMesh?.material) backgroundMesh.material.opacity = (activePanelTheme ? 1 : 0.35) * clamp(fade, 0.1, 1);
           } else {
             spr.visible = true;
-            if (spr.material) spr.material.opacity = 1;
+            const {textMesh,backgroundMesh} = spr.userData;
+            if (textMesh) textMesh.fillOpacity = 1;
+            if (backgroundMesh?.material) backgroundMesh.material.opacity = activePanelTheme ? 1 : 0.35;
           }
         }
       }
