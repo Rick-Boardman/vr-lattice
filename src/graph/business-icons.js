@@ -56,12 +56,14 @@ export const BUSINESS_ICON_PATHS = Object.freeze({
 
 /**
  * @param {object} THREE Three.js namespace.
+ * @param {string[]} [names] Select only the glyphs this consumer uses.
  * @returns {Record<string, object | null>} One texture per icon name; null outside a browser.
  */
-export function createBusinessIconTextures(THREE) {
+export function createBusinessIconTextures(THREE, names = Object.keys(BUSINESS_ICON_PATHS)) {
   const textures = {};
-  for (const [name, paths] of Object.entries(BUSINESS_ICON_PATHS)) {
-    textures[name] = createIconTexture(THREE, paths);
+  for (const name of names) {
+    if (!Object.prototype.hasOwnProperty.call(BUSINESS_ICON_PATHS, name)) continue;
+    textures[name] = createIconTexture(THREE, BUSINESS_ICON_PATHS[name]);
   }
   return textures;
 }

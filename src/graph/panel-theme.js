@@ -31,11 +31,11 @@ export const GRAPH_PANEL_THEMES = Object.freeze({
   light: Object.freeze({ ...common, key: "light", panelBgColor: 0xc5d1df,
     titleBarColor: 0xc7d8ea, contentBgColor: 0xf8fafc, contentTokens: lightContent, titleTextColor: 0x1b304a,
     borderColor: 0x8499b2, accentColor: 0x245b98, background: 0xe7edf5,
-    labelColor: 0x17283c, labelBackgroundColor: 0xf4f7fc }),
+    labelColor: 0x17283c, labelBackgroundColor: 0xf4f7fc, labelBorderColor: 0x59738f }),
   dark: Object.freeze({ ...common, key: "dark", panelBgColor: 0x111a26,
     titleBarColor: 0x344b65, contentBgColor: 0x182536, contentTokens: darkContent, titleTextColor: 0xe9f1fb,
     borderColor: 0x546c88, accentColor: 0x8dc4ff, background: 0x0a1320,
-    labelColor: 0xe8f2ff, labelBackgroundColor: 0x101a29 }),
+    labelColor: 0xe8f2ff, labelBackgroundColor: 0x101a29, labelBorderColor: 0x829bb7 }),
 });
 
 const fields = ["panelBgColor", "panelBgOpacity", "titleBarColor", "titleBarOpacity",

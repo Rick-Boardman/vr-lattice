@@ -95,11 +95,26 @@ that expose window appearance tokens; older Halo builds retain a readable
 slate fallback for panel bodies. Existing custom and legacy theme selections are unchanged
 unless the host explicitly switches to a native mode.
 
-Use `resolveGraphPanelTheme({ storageKey })` for initial preference resolution
-and `installGraphPanelThemeControl(ctx, { storageKey })` for the optional
-native Appearance panel. Without an explicit host mode, the control restores
-the saved choice or follows system light/dark preference until the user
-chooses a mode. Call the control's `dispose()` when removing it.
+Use `resolveGraphPanelTheme({ storageKey })` to select the matching palette before
+the first render, and `installGraphPanelThemeControl(ctx, { storageKey })` to
+bind the graph to the saved preference. **System** is the default and keeps
+following OS changes. **Light** and **Dark** are persisted overrides. Keep the
+same per-app storage key to retain the prior choice, or pass `legacyStorageKeys`
+to migrate choices from old keys.
+
+Settings is closable and created only when opened. Put
+`createGraphSettingsHotbarItem({ THREE })` in an existing hotbar and route its
+action to the control's `toggleSettings()`. Alt+Shift+S also opens Settings on the web, except while typing in another form or inline editor. If the host owns its Settings UI,
+pass `settings: false`; use an external Halo appearance `preference` if the host
+also owns the preference and media-query lifetime. The control unsubscribes
+when the graph is disposed, or you can call `dispose()` directly.
+
+For the universal network runner, use
+`runUniversalNetworkSceneFromJson(config, { appearanceSettings: { storageKey } })`
+to add the standard Settings action without implementing app-specific chrome.
+With appearance enabled, node/edge colors remain hue-coded and are adjusted
+against the resulting scene background; set `networkContrast: false` in
+`appearanceSettings` to retain explicitly authored material colors.
 
 ### Scroll saved card text
 

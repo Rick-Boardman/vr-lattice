@@ -341,6 +341,29 @@ export function disposeGraphTroikaText(mesh) {
   mesh?.dispose?.();
 }
 
+function billboardPlateGeometry(THREE, width, height, radius, stroke = 0) {
+  const trace = (path, w, h, r) => {
+    const x = w / 2;
+    const y = h / 2;
+    path.moveTo(-x + r, -y);
+    path.lineTo(x - r, -y);
+    path.quadraticCurveTo(x, -y, x, -y + r);
+    path.lineTo(x, y - r);
+    path.quadraticCurveTo(x, y, x - r, y);
+    path.lineTo(-x + r, y);
+    path.quadraticCurveTo(-x, y, -x, y - r);
+    path.lineTo(-x, -y + r);
+    path.quadraticCurveTo(-x, -y, -x + r, -y);
+    path.closePath();
+    return path;
+  };
+  const shape = trace(new THREE.Shape(), width, height, radius);
+  if (stroke > 0) {
+    shape.holes.push(trace(new THREE.Path(), width - 2 * stroke, height - 2 * stroke, Math.max(0, radius - stroke)));
+  }
+  return new THREE.ShapeGeometry(shape, 6);
+}
+
 export function createBillboardTextLabel({
   THREE,
   Text = TroikaText,
@@ -348,12 +371,16 @@ export function createBillboardTextLabel({
   color = HUD_TEXT_DEFAULT_COLOR,
   scale = [8, 2, 1],
   font = "44px monospace",
+  fontScale = 1,
   fontUrl = HUD_TEXT_FONT_URL,
   unicodeFontsURL = HUD_TEXT_UNICODE_FONTS_URL,
   backgroundColor = 0x000000,
   backgroundOpacity = 0.35,
+  opaquePlate = false,
   borderColor = null,
   borderOpacity = 0.85,
+  borderWidth = 0.045,
+  cornerRadius = 0.12,
   lineHeight = 1,
   outlineWidth = 0.025,
   outlineColor = 0x05090e,
@@ -379,12 +406,17 @@ export function createBillboardTextLabel({
   const requestedScaleY = Number(scale?.[1]) || 1;
   const uniformScale = requestedScaleY > 0 ? requestedScaleY : 1;
   const panelAspectX = uniformScale > 0 ? requestedScaleX / uniformScale : 1;
+  const plateRadius = Math.max(0, Math.min(cornerRadius, panelAspectX / 2, 0.5));
+  const stroke = Math.max(0.001, Math.min(borderWidth, panelAspectX / 4, 0.25));
   const backgroundMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(panelAspectX, 1),
+    borderColor == null ? new THREE.PlaneGeometry(panelAspectX, 1) : billboardPlateGeometry(THREE, panelAspectX, 1, plateRadius),
     new THREE.MeshBasicMaterial({
       color: asHexColor(backgroundColor, 0x000000),
       transparent: true,
-      opacity: Number.isFinite(backgroundOpacity) ? backgroundOpacity : 0.35,
+      // Retain the late (transparent) render queue above network lines,
+      // but replace destination pixels wherever the plate geometry exists.
+      opacity: opaquePlate ? 1 : Number.isFinite(backgroundOpacity) ? backgroundOpacity : 0.35,
+      blending: opaquePlate ? THREE.NoBlending : THREE.NormalBlending,
       depthTest: !!depthTest,
       depthWrite: !!depthWrite,
     }),
@@ -392,7 +424,7 @@ export function createBillboardTextLabel({
   const borderMesh = borderColor == null
     ? null
     : new THREE.Mesh(
-      new THREE.PlaneGeometry(panelAspectX + 0.03, 1.03),
+      billboardPlateGeometry(THREE, panelAspectX, 1, plateRadius, stroke),
       new THREE.MeshBasicMaterial({
         color: asHexColor(borderColor, 0xffffff),
         transparent: true,
@@ -407,7 +439,7 @@ export function createBillboardTextLabel({
     backgroundMesh.userData.graphEditTarget = { ...editTarget };
   }
   if (borderMesh) {
-    borderMesh.position.z = -0.01;
+    borderMesh.position.z = 0.003;
     group.add(borderMesh);
   }
   group.add(backgroundMesh);
@@ -418,7 +450,7 @@ export function createBillboardTextLabel({
     color,
     font: fontUrl,
     unicodeFontsURL,
-    fontSize: resolveBillboardLabelLocalFontSize(fontSizePx),
+    fontSize: Math.min(0.4, resolveBillboardLabelLocalFontSize(fontSizePx) * fontScale),
     fontWeight: String(font ?? "").includes("bold") ? "bold" : undefined,
     textAlign: "center",
     anchorX: "center",
@@ -482,7 +514,19 @@ export function createBillboardTextLabel({
   return group;
 }
 
-export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512, canvasH = 128, font = "44px monospace", scale = [8, 2, 1] } = {}) {
+// Three sorts the plate/border/ink of one Group by groupOrder first. Give each
+// billboard a distinct groupOrder so a near plate occludes every part of a far
+// one. Keep the layer above the shared network meshes, with stable ties.
+export function orderOpaqueNetworkBillboards(visible) {
+  visible.sort((a, b) => b.depth - a.depth || a.label.id - b.label.id);
+  for (let i = 0; i < visible.length; i++) {
+    const label = visible[i].label;
+    const order = 10 + i * 0.04;
+    if (label.renderOrder !== order) label.setRenderOrder(order);
+  }
+}
+
+export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512, canvasH = 128, font = "44px monospace", scale = [8, 2, 1], legible = false } = {}) {
   return function makeLabelSprite({ text, color = "#dde3ea" } = {}) {
     return createBillboardTextLabel({
       THREE,
@@ -490,13 +534,17 @@ export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512
       text: String(text ?? "").slice(0, 48),
       color,
       scale,
-      font,
+      font: legible && !String(font).includes("bold") ? `bold ${font}` : font,
+      fontScale: legible ? 1.45 : 1,
+      outlineWidth: legible ? 0 : 0.025,
       backgroundColor: 0x000000,
       backgroundOpacity: 0.35,
-      borderColor: null,
+      opaquePlate: legible,
+      borderColor: legible ? 0x627c99 : null,
+      borderOpacity: legible ? 1 : 0.85,
       depthTest: false,
       depthWrite: false,
-      renderOrder: 0,
+      renderOrder: legible ? 10 : 0,
       textRole: "network-label",
     });
   };

@@ -8,19 +8,19 @@ import { clamp, lerp } from "@rb/halo/src/scalar-math.js";
 /**
  * Purpose: Create a reusable WebGL pulse effect controller for graph/network edges that can emphasize lines incident to an active node.
  * @param {object} [options={}] Pulse effect configuration.
- * @param {{ Group: new () => { name: string, add: (...objects: unknown[]) => void }, SphereGeometry: new (radius: number, widthSegments: number, heightSegments: number) => { dispose?: () => void }, MeshBasicMaterial: new (options?: object) => { dispose?: () => void }, Mesh: new (geometry: unknown, material: unknown) => { visible: boolean, position: { set: (x: number, y: number, z: number) => void }, scale: { setScalar: (value: number) => void } }, Vector3: new () => { copy: (value: unknown) => unknown, x: number, y: number, z: number }, AdditiveBlending: number }} options.THREE Three.js namespace used to allocate the pulse group, meshes, geometry, materials, and working vectors.
+ * @param {object} options.THREE Three.js namespace used to allocate the pulse group, instanced geometry, shader material, and working vectors.
  * @param {{ add: (...objects: unknown[]) => void, remove: (object: unknown) => void }} options.parent Parent object that receives the pulse effect group.
  * @param {number} [options.color=NETWORK_PULSE_DEFAULTS.color] Hex color applied to active pulse meshes and emphasized pulseable edges.
- * @param {number} [options.maxPulses=NETWORK_PULSE_DEFAULTS.maxPulses] Maximum number of reusable pulse meshes allocated up front.
+ * @param {number} [options.maxPulses=NETWORK_PULSE_DEFAULTS.maxPulses] Maximum number of reusable pulse instances allocated up front.
  * @param {number} [options.pulsesPerEdge=NETWORK_PULSE_DEFAULTS.pulsesPerEdge] Number of animated pulses emitted along each pulseable incident edge.
- * @param {number} [options.pulseRadius=NETWORK_PULSE_DEFAULTS.pulseRadius] Sphere radius used for each pulse mesh.
+ * @param {number} [options.pulseRadius=NETWORK_PULSE_DEFAULTS.pulseRadius] Radius used to size the moving pulse head and trail.
  * @param {"classic" | "mainflow"} [options.style="classic"] Pulse animation style used to calculate scale falloff over time.
  * @param {number} [options.pulseBaseOpacity=0.9] Shared material opacity used for pulse meshes.
  * @param {number} [options.pulseMinScale=1.105] Minimum pulse scale applied during animation.
  * @param {number} [options.pulseMaxScale=1.6] Maximum pulse scale applied during animation.
  * @param {(line: unknown) => boolean} [options.isEdgePulseable=null] Optional predicate used to exclude specific edge lines from pulse emission.
- * @returns {{ group: unknown, clear: () => void, dispose: () => void, setActiveNode: (nodeId: string | null, atS: number) => void, rebuild: (edgeLines: Array<unknown>) => void, setEdgeEmphasis: (edgeLines: Array<unknown>, options?: { dimOpacity?: number, brightOpacity?: number }) => void, update: (tS: number, nodeById: Map<string, { position: unknown }>, edgeLines: Array<unknown>, options?: { speed?: number }) => void }} Pulse effect controller with lifecycle, emphasis, and per-frame update hooks.
- * Side effects: allocates Three.js geometry/material/mesh objects, adds and removes a group from the supplied parent, mutates edge line material colors/opacities, and mutates pulse mesh visibility/position/scale during updates.
+ * @returns {{ group: unknown, setTheme: (theme: string | null) => void, clear: () => void, dispose: () => void, setActiveNode: (nodeId: string | null, atS: number) => void, rebuild: (edgeLines: Array<unknown>) => void, setEdgeEmphasis: (edgeLines: Array<unknown>, options?: { dimOpacity?: number, brightOpacity?: number }) => void, update: (tS: number, nodeById: Map<string, { position: unknown }>, edgeLines: Array<unknown>, options?: { speed?: number }) => void }} Pulse effect controller with lifecycle, emphasis, and per-frame update hooks.
+ * Side effects: allocates Three.js geometry/material/mesh objects, adds and removes a group from the supplied parent, mutates edge line material colors/opacities, and mutates pulse instance visibility, position, and scale during updates.
  */
 export function createNetworkPulseEffect({
   THREE,
@@ -46,21 +46,122 @@ export function createNetworkPulseEffect({
 
   const incidentEdgeLineIdxByNodeId = new Map();
 
-  const pulseGeo = new THREE.SphereGeometry(pulseRadius, 10, 8);
-  const pulseMat = new THREE.MeshBasicMaterial({
-    color,
+  // One depth-tested draw for the whole pool. Each camera-facing quad is oriented
+  // along its edge's projected tangent, including per-eye projection in XR.
+  const capacity = Math.max(0, Math.trunc(maxPulses));
+  const pulseGeo = new THREE.InstancedBufferGeometry();
+  pulseGeo.setIndex([0, 1, 2, 0, 2, 3]);
+  pulseGeo.setAttribute("position", new THREE.Float32BufferAttribute([
+    -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0,
+  ], 3));
+  function dynamicAttribute(name, itemSize) {
+    const attribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity * itemSize), itemSize);
+    attribute.setUsage(THREE.DynamicDrawUsage);
+    pulseGeo.setAttribute(name, attribute);
+    return attribute;
+  }
+  const origins = dynamicAttribute("pulseOrigin", 3);
+  const vectors = dynamicAttribute("pulseVector", 3);
+  const sizes = dynamicAttribute("pulseSize", 2);
+  const dynamicAttributes = [origins, vectors, sizes];
+  pulseGeo.instanceCount = 0;
+  const baseColor = new THREE.Color(color);
+  const hsl = baseColor.getHSL({});
+  const lightInk = new THREE.Color().setHSL(hsl.h, Math.min(0.88, hsl.s * 1.30), 0.21);
+  const lightCore = baseColor.clone().lerp(new THREE.Color(0xffffff), 0.45);
+  const darkInk = baseColor.clone();
+  const darkCore = baseColor.clone().lerp(new THREE.Color(0xffffff), 0.65);
+  const pulseMat = new THREE.ShaderMaterial({
+    uniforms: {
+      pulseInk: { value: darkInk },
+      pulseCore: { value: darkCore },
+      pulseOpacity: { value: pulseBaseOpacity },
+      lightMode: { value: false },
+      pixelsToNdc: { value: 0 },
+    },
+    vertexShader: `
+      attribute vec3 pulseOrigin;
+      attribute vec3 pulseVector;
+      attribute vec2 pulseSize;
+      uniform float pixelsToNdc;
+      varying vec2 pulseUV;
+      varying float tailReach;
+      void main() {
+        vec4 center = modelViewMatrix * vec4(pulseOrigin, 1.0);
+        vec3 along = mat3(modelViewMatrix) * pulseVector;
+        vec2 tangent = along.xy;
+        if (projectionMatrix[2][3] != 0.0) {
+          tangent -= center.xy * along.z / min(center.z, -0.001);
+        }
+        float tangentLength = length(tangent);
+        vec2 forward = tangentLength > 0.0001 ? tangent / tangentLength : vec2(1.0, 0.0);
+        vec2 across = vec2(-forward.y, forward.x);
+        float radius = pulseSize.x * length(modelViewMatrix[0].xyz);
+        if (pixelsToNdc > 0.0) {
+          float viewUnitsPerPixel = pixelsToNdc * abs((projectionMatrix * center).w) / projectionMatrix[1][1];
+          radius = clamp(radius, 2.65 * viewUnitsPerPixel, 4.1 * viewUnitsPerPixel);
+        }
+        // Shift rearward so the bright head stays exactly on the moving path.
+        pulseUV = vec2(mix(-3.8, 1.2, position.x * 0.5 + 0.5), position.y * 1.15);
+        tailReach = min(3.8, pulseSize.y * tangentLength / max(radius, 0.0001));
+        center.xy += radius * (forward * pulseUV.x + across * pulseUV.y);
+        gl_Position = projectionMatrix * center;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 pulseInk;
+      uniform vec3 pulseCore;
+      uniform float pulseOpacity;
+      uniform bool lightMode;
+      varying vec2 pulseUV;
+      varying float tailReach;
+      void main() {
+        float x = pulseUV.x;
+        float y = pulseUV.y;
+        float headR = length(vec2(x / 0.88, y / 0.65));
+        float head = 1.0 - smoothstep(0.30, 1.18, headR);
+        float glint = 1.0 - smoothstep(0.06, 0.70, length(vec2(x / 0.88, y / 0.50)));
+        float behind = max(0.0, -x);
+        float reach = max(0.12, tailReach);
+        float width = mix(0.16, 0.62, exp(-behind * 0.49));
+        float tail = (1.0 - smoothstep(0.0, 1.0, abs(y) / width))
+          * (1.0 - smoothstep(0.0, reach, behind))
+          * (1.0 - smoothstep(-0.12, 0.30, x));
+        float haloR = length(vec2(x / 1.05, y / 1.02));
+        float halo = (1.0 - smoothstep(0.25, 1.10, haloR)) * (lightMode ? 0.14 : 0.18);
+        float alpha = min(1.0, max(head * 0.96, tail * 0.9) + halo) * pulseOpacity;
+        vec3 ink = mix(pulseInk, pulseCore, glint * (lightMode ? 0.96 : 0.72));
+        gl_FragColor = vec4(ink, alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
     transparent: true,
-    opacity: pulseBaseOpacity,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
+  const pulseMesh = new THREE.Mesh(pulseGeo, pulseMat);
+  // CPU positions live in instance attributes, outside the unit quad's bounds.
+  pulseMesh.frustumCulled = false;
+  pulseMesh.visible = false;
+  const renderViewport = new THREE.Vector4();
+  pulseMesh.onBeforeRender = renderer => {
+    // Bound the visual weight in desktop/touch screen pixels: readable at
+    // overview scale but not oversized when zoomed. XR keeps world sizing.
+    const pixels = renderer.getCurrentViewport(renderViewport).w;
+    pulseMat.uniforms.pixelsToNdc.value = renderer.xr?.isPresenting || pixels <= 0
+      ? 0 : 2 * renderer.getPixelRatio() / pixels;
+    pulseMat.uniformsNeedUpdate = true;
+  };
+  group.add(pulseMesh);
 
-  const pulseMeshes = [];
-  for (let i = 0; i < maxPulses; i++) {
-    const m = new THREE.Mesh(pulseGeo, pulseMat);
-    m.visible = false;
-    pulseMeshes.push(m);
-    group.add(m);
+  function setTheme(theme) {
+    const light = theme === "light";
+    pulseMat.uniforms.lightMode.value = light;
+    pulseMat.uniforms.pulseInk.value = light ? lightInk : darkInk;
+    pulseMat.uniforms.pulseCore.value = light ? lightCore : darkCore;
+    // Light needs chromatic contrast; additive glow washes out on pale worlds.
+    pulseMat.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
   }
 
   let activeNodeId = null;
@@ -76,7 +177,8 @@ export function createNetworkPulseEffect({
   }
 
   function clearPulses() {
-    for (const p of pulseMeshes) p.visible = false;
+    pulseGeo.instanceCount = 0;
+    pulseMesh.visible = false;
   }
 
   function clear() {
@@ -128,9 +230,10 @@ export function createNetworkPulseEffect({
     {
       dimOpacity = NETWORK_PULSE_DEFAULTS.dimOpacity,
       brightOpacity = NETWORK_PULSE_DEFAULTS.brightOpacity,
+      force = false,
     } = {}
   ) {
-    if (activeNodeId === lastEmphasisNodeId) return;
+    if (!force && activeNodeId === lastEmphasisNodeId) return;
     lastEmphasisNodeId = activeNodeId;
 
     const hasActive = !!activeNodeId;
@@ -165,7 +268,7 @@ export function createNetworkPulseEffect({
   }
 
   function update(tS, nodeById, edgeLines, { speed = NETWORK_PULSE_DEFAULTS.speed } = {}) {
-    if (!activeNodeId) {
+    if (!activeNodeId || pulseRadius <= 0 || capacity === 0) {
       clearPulses();
       return;
     }
@@ -174,7 +277,7 @@ export function createNetworkPulseEffect({
     const baseTime = Math.max(0, tS - activeAtS);
 
     let pIdx = 0;
-    for (let i = 0; i < edgeIdxs.length; i++) {
+    for (let i = 0; i < edgeIdxs.length && pIdx < capacity; i++) {
       const line = edgeLines[edgeIdxs[i]];
       const e = line?.userData?.edge;
       if (!e) continue;
@@ -192,17 +295,17 @@ export function createNetworkPulseEffect({
         _b.copy(fromMesh.position);
       }
 
-      for (let k = 0; k < pulsesPerEdge; k++) {
-        if (pIdx >= pulseMeshes.length) break;
+      const dx = _b.x - _a.x;
+      const dy = _b.y - _a.y;
+      const dz = _b.z - _a.z;
+      if (dx === 0 && dy === 0 && dz === 0) continue;
+      for (let k = 0; k < pulsesPerEdge && pIdx < capacity; k++) {
         const phase = k / pulsesPerEdge;
         const u = (baseTime * speed + phase) % 1;
 
         const px = lerp(_a.x, _b.x, u);
         const py = lerp(_a.y, _b.y, u);
         const pz = lerp(_a.z, _b.z, u);
-
-        const m = pulseMeshes[pIdx++];
-        m.position.set(px, py, pz);
 
         let glow;
         if (style === "mainflow") {
@@ -230,18 +333,26 @@ export function createNetworkPulseEffect({
         }
 
         const s = pulseMinScale + glow * (pulseMaxScale - pulseMinScale);
-        m.scale.setScalar(s);
-        // Slight opacity modulation (material is shared, so do not set per-mesh)
-        m.visible = true;
+        origins.setXYZ(pIdx, px, py, pz);
+        vectors.setXYZ(pIdx, dx, dy, dz);
+        sizes.setXY(pIdx, pulseRadius * s, u);
+        pIdx++;
       }
-      if (pIdx >= pulseMeshes.length) break;
     }
 
-    for (; pIdx < pulseMeshes.length; pIdx++) pulseMeshes[pIdx].visible = false;
+    pulseGeo.instanceCount = pIdx;
+    pulseMesh.visible = pIdx > 0;
+    for (const attribute of dynamicAttributes) {
+      if (!pIdx) continue;
+      attribute.clearUpdateRanges();
+      attribute.addUpdateRange(0, pIdx * attribute.itemSize);
+      attribute.needsUpdate = true;
+    }
   }
 
   return {
     group,
+    setTheme,
     clear,
     dispose,
     setActiveNode,
