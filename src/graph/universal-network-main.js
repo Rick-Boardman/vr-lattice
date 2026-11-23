@@ -397,6 +397,7 @@ export async function runUniversalNetworkScene(config) {
   let settingsControl=null;
   let networkModel = null, visibleView = null, viewOpen = false;
   let allLinks = false, selectedGroup = null, focused = false;
+  let overviewLinks = networkViewOptions?.overviewLinks ?? "group-summary";
   const changedHosts = new Set(), groupLabels = new Map();
   let summaryLines = [], visiblePulseLines = [];
   const viewWindowKey = "lattice-network-view";
@@ -802,7 +803,7 @@ export async function runUniversalNetworkScene(config) {
   function updateNetworkView() {
     if (!networkModel) return;
     visibleView = deriveNetworkView(networkModel, {
-      all: allLinks, groupId: selectedGroup, nodeId: selectedNodeId, focused, expandedHosts: changedHosts,
+      all: allLinks, groupId: selectedGroup, nodeId: selectedNodeId, focused, expandedHosts: changedHosts, overviewLinks,
     });
     for (const node of nodeMeshes) node.visible = visibleView.nodeIds.has(node.userData.id);
     for (const label of labelSprites) label.visible = showLabels && visibleView.nodeIds.has(label.userData.nodeId);
@@ -811,8 +812,10 @@ export async function runUniversalNetworkScene(config) {
     for (const line of edgeLines) line.visible = showEdges && raw.has(line.userData.sourceEdge);
     clearSummaryLines();
     if (showEdges) for (const edge of visibleView.aggregated) {
-      const from = groupLabels.get(edge.fromId) ?? nodeById.get(edge.fromId);
-      const to = groupLabels.get(edge.toId) ?? nodeById.get(edge.toId);
+      const from = edge.anchorFromId != null ? nodeById.get(edge.anchorFromId)
+        : groupLabels.get(edge.fromId) ?? nodeById.get(edge.fromId);
+      const to = edge.anchorToId != null ? nodeById.get(edge.anchorToId)
+        : groupLabels.get(edge.toId) ?? nodeById.get(edge.toId);
       if (!from || !to) continue;
       const line = config.render.buildEdgeLine({
         THREE, edge: { ...edge, type: "summary" }, fromPos: from.position, toPos: to.position, ctx,
@@ -905,6 +908,13 @@ export async function runUniversalNetworkScene(config) {
     updateNetworkView(); updateHotbarVisuals();
   }
 
+  function setNetworkOverviewLinks(mode) {
+    if (mode !== "backbone" && mode !== "group-summary") return false;
+    overviewLinks = mode;
+    restoreNetworkOverview();
+    return true;
+  }
+
   function renderNetworkViewPanel() {
     if (!viewOpen || !networkModel) return;
     const action = (text, label, onClick) => ({
@@ -912,13 +922,22 @@ export async function runUniversalNetworkScene(config) {
     });
     const title = selectedGroup ?? (selectedNodeId ? pickTextFromFields(nodeById.get(selectedNodeId)?.userData.node, ["name", "label", "id"]) : null);
     const rows = [
-      { text: allLinks ? "All links" : focused ? "Focused view" : title ? "Selected relationships" : "Overview" },
+      { text: allLinks ? "All links" : focused ? "Focused view" : title ? "Selected relationships" :
+        visibleView?.backbone ? "Connectivity backbone" : "Overview" },
       action("Return to overview", "Back", restoreNetworkOverview),
       action("Show original relationships", "All Links", showAllNetworkLinks),
       action("Frame visible graph", "Fit", fitNetworkView),
     ];
     const represented = visibleView?.aggregated.reduce((sum, edge) => sum + edge.count, 0) ?? 0;
-    if (represented) rows.push({ text: `${represented} links in ${visibleView.aggregated.length} grouped paths` });
+    if (visibleView?.backbone) {
+      rows.push({ text: `${visibleView.aggregated.length} of ${visibleView.overviewPathCount} connection paths` });
+      if (represented) rows.push({ text: `${represented} source links in the displayed paths` });
+    } else if (represented) rows.push({ text: `${represented} links in ${visibleView.aggregated.length} grouped paths` });
+    if (networkViewOptions.overviewLinks === "backbone" || networkViewOptions.overviewLinks === "group-summary") {
+      const alternative = overviewLinks === "backbone" ? "group-summary" : "backbone";
+      rows.push(action(alternative === "backbone" ? "Show strongest paths and bridges" : "Show all group-to-group paths",
+        alternative === "backbone" ? "Backbone" : "Grouped", () => setNetworkOverviewLinks(alternative)));
+    }
     if (focused && selectedGroup != null) rows.push({ text: "Group members and internal links only" });
     if (title) rows.push(action(title, "Focus", focusNetworkSelection));
     const children = networkModel.children.get(selectedNodeId);
@@ -1191,7 +1210,7 @@ export async function runUniversalNetworkScene(config) {
 
     if (networkViewOptions) {
       const map = positions.clusterByNode ?? new Map();
-      networkModel = createNetworkViewModel(graph, map, networkViewOptions);
+      networkModel = createNetworkViewModel(graph, map, networkViewOptions, positions.communityByNode);
       buildGroupLabels();
     } else pulseEffect.rebuild(edgeLines);
     updatePulseActive();
@@ -1268,6 +1287,7 @@ export async function runUniversalNetworkScene(config) {
   if (networkViewOptions) {
     ctx.networkView = {
       snapshot: () => visibleView ? { all: allLinks, focused, selectedGroup, selectedNodeId,
+        overviewLinks, backbone: visibleView.backbone, overviewPathCount: visibleView.overviewPathCount,
         nodeIds: [...visibleView.nodeIds], raw: visibleView.raw.length, aggregates: visibleView.aggregated.map(edge => ({...edge})),
         groups: [...(networkModel?.groups.keys() ?? [])] } : null,
       showAll: showAllNetworkLinks,
@@ -1275,6 +1295,7 @@ export async function runUniversalNetworkScene(config) {
       focus: focusNetworkSelection,
       selectGroup: id => { if (networkModel?.groups.has(id)) setSelected(networkGroupKey(id)); },
       toggleHost: toggleNetworkHost,
+      setOverviewLinks: setNetworkOverviewLinks,
       fit: fitNetworkView,
       togglePanel: toggleNetworkViewPanel,
     };
