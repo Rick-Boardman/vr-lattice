@@ -2577,7 +2577,7 @@ function applyEdgeLabelAppearance(THREE, label, appearance) {
     const oldGeometry = backgroundMesh.geometry;
     backgroundMesh.geometry = createRoundedCardGeometry({ THREE, width, height: 0.86, cornerRadius: 0.22 });
     oldGeometry.dispose();
-    const outlineWidth = 0.105;
+    const outlineWidth = 0.045;
     const outline = new THREE.Mesh(
       createRoundedCardGeometry({ THREE, width: width + 2 * outlineWidth,
         height: 0.86 + 2 * outlineWidth, cornerRadius: 0.22 + outlineWidth }),
