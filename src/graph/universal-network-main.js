@@ -834,21 +834,43 @@ export async function runUniversalNetworkScene(config) {
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const center = sphere.center;
     const radius = Math.max(2, sphere.radius);
-    const distance = Math.max(8, networkFitDistance(radius, camera.fov, camera.aspect));
+    // A focused graph needs room between its open floating view and target panels.
+    // Use their actual layout extents; if they leave no usable central corridor,
+    // keep the standard full-viewport fit and let the user move/collapse the panels.
+    let fraction = 1, horizontalOffset = 0;
+    const ui = hudSystem.hud;
+    const viewport = Number(ui?.layoutW);
+    if (focused && viewport > 0) {
+      const windows = ui.ui?.windows;
+      const view = viewOpen ? windows?.[viewWindowKey] : null;
+      const target = windows?.selection;
+      const onScreen = win => win && !win.collapsed && !win.hidden && win.x < viewport &&
+        win.x + win.w > 0 && win.y < Number(ui.layoutH) && win.y + win.h > 0;
+      const left = onScreen(view) && view.x < viewport * 0.5 ? Math.max(0, view.x + view.w + 14) : 0;
+      const right = onScreen(target) && target.x >= viewport * 0.5 ? Math.min(viewport, target.x - 14) : viewport;
+      if (right - left >= viewport * 0.32) {
+        fraction = (right - left) / viewport;
+        horizontalOffset = 1 - (left + right) / viewport;
+      }
+    }
+    const distance = Math.max(8, networkFitDistance(radius, camera.fov, camera.aspect * fraction));
     for (const label of groupLabels.values()) {
       const base = label.userData.overviewBaseScale ??= label.scale.clone();
       label.scale.copy(base).multiplyScalar(Math.max(1, distance / 92));
     }
     // A stable elevated outlook shows the entire layout instead of choosing one random group.
     const out = new THREE.Vector3(0.08, 0.61, 0.8).normalize();
-    rig.player.position.copy(center).addScaledVector(out, distance);
+    const right = new THREE.Vector3(out.z, 0, -out.x).normalize();
+    const shift = horizontalOffset * distance * Math.tan(camera.fov * Math.PI / 360) * camera.aspect;
+    const lookAtCenter = center.clone().addScaledVector(right, shift);
+    rig.player.position.copy(lookAtCenter).addScaledVector(out, distance);
     camera.far = Math.max(camera.far, distance + 2.2 * radius);
     camera.updateProjectionMatrix();
     if (scene.fog?.isFog) {
       scene.fog.near = Math.max(0, distance - 1.06 * radius);
       scene.fog.far = distance + 3 * radius;
     }
-    navigation?.lookAtWorld?.(center);
+    navigation?.lookAtWorld?.(lookAtCenter);
     return true;
   }
 
