@@ -2,6 +2,7 @@
 // Pure mesh-building and highlighting utilities for graph scenes.
 
 import { Text as TroikaText } from "troika-three-text";
+import { setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
 
 import {
   HUD_TEXT_DEFAULT_COLOR,
@@ -223,7 +224,8 @@ function chainOnBeforeRender(mesh, callback) {
 }
 
 function applyBillboardLabelRenderOrder(group, renderOrder) {
-  const resolved = Math.floor(Number(renderOrder) || 0);
+  const order = Number(renderOrder);
+  const resolved = Number.isFinite(order) ? order : 0;
   group.renderOrder = resolved;
   if (group.userData?.backgroundMesh) {
     group.userData.backgroundMesh.renderOrder = resolved;
@@ -232,7 +234,12 @@ function applyBillboardLabelRenderOrder(group, renderOrder) {
     group.userData.borderMesh.renderOrder = resolved + 0.01;
   }
   if (group.userData?.textMesh) {
-    group.userData.textMesh.renderOrder = resolved + 0.02;
+    const text = group.userData.textMesh;
+    applyGraphTroikaRenderSettings(text, {
+      depthTest: text.userData.graphTroikaDepthTest,
+      depthWrite: text.userData.graphTroikaDepthWrite,
+      renderOrder: resolved + 0.02,
+    });
   }
 }
 
@@ -355,6 +362,7 @@ export function createBillboardTextLabel({
   depthWrite = false,
   renderOrder = 0,
   textRole = "label",
+  editTarget = null,
 } = {}) {
   const group = new THREE.Group();
   const cameraWorldQuaternion = new THREE.Quaternion();
@@ -393,6 +401,11 @@ export function createBillboardTextLabel({
         depthWrite: !!depthWrite,
       }),
     );
+  // Apps may include this surface in a separate edit raycast. No ordinary
+  // graph-hit marker is added, so a label does not change selection or dragging.
+  if (editTarget && typeof editTarget === "object") {
+    backgroundMesh.userData.graphEditTarget = { ...editTarget };
+  }
   if (borderMesh) {
     borderMesh.position.z = -0.01;
     group.add(borderMesh);
@@ -422,6 +435,9 @@ export function createBillboardTextLabel({
   labelText.userData.graphTextRole = textRole;
   group.add(labelText);
   setGraphTroikaText(labelText, { text, x: 0, y: 0, z: 0.01 });
+  if (editTarget && typeof editTarget === "object") {
+    setGraphSceneEditSurface(backgroundMesh, editTarget.field ?? "label", null, labelText);
+  }
 
   group.scale.set(uniformScale, uniformScale, uniformScale);
   group.userData.backgroundMesh = backgroundMesh;

@@ -2,6 +2,8 @@
 // Shared picking helpers for graph scenes.
 // Goal: de-duplicate desktop + XR selection/hover wiring without changing UX.
 
+import { getGraphSceneEditSurface } from "./scene-edit-surfaces.js";
+
 function getGraphHit(entry) {
   return entry?.object?.userData?.graphHit ?? null;
 }
@@ -140,4 +142,41 @@ export function selectPreferredGraphHit(
   if (edgeMatch) return getGraphHit(edgeMatch);
 
   return firstGraphHit;
+}
+
+function isVisibleEditHit(entry) {
+  for (let object = entry?.object; object; object = object.parent) {
+    if (object.visible === false) return false;
+  }
+  return Boolean(entry?.object);
+}
+
+/**
+ * Resolve a direct text-edit gesture, separate from ordinary graph selection.
+ * Include edit-only label surfaces in the edit raycast and supply the ordinary
+ * preferred hit (if already computed) so ports and handles keep precedence.
+ * A card's body remains a hit region even when its text is currently empty.
+ */
+export function resolveGraphSceneEditTarget(hits = [], preferredGraphHit = undefined, { includeSurface = false } = {}) {
+  if (!Array.isArray(hits)) return null;
+  const visible = hits.filter(isVisibleEditHit);
+  const preferred = preferredGraphHit ?? selectPreferredGraphHit(visible);
+  if (isControlGraphHit(preferred)) return null;
+  if (preferred?.kind === "node") {
+    const entry = visible.find(hit => getGraphHit(hit) === preferred);
+    const region = entry?.object?.userData?.graphEditRegion;
+    if (!region) return null;
+    const isBody = region.shape === "card" && Number.isFinite(region.bodyThreshold)
+      && Number.isFinite(entry.uv?.y) && entry.uv.y < region.bodyThreshold;
+    const field = isBody ? "body" : "title";
+    const target = { kind: "node", id: preferred.id, node: preferred.node, field };
+    return includeSurface ? { ...target, surface: getGraphSceneEditSurface(entry.object, field) } : target;
+  }
+  for (const entry of visible) {
+    const target = entry.object.userData?.graphEditTarget;
+    if (target?.kind === "edge" || target?.kind === "label") {
+      return includeSurface ? { ...target, surface: getGraphSceneEditSurface(entry.object, target.field ?? "label") } : target;
+    }
+  }
+  return null;
 }

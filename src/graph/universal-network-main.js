@@ -103,8 +103,9 @@ function compileJsonConfig(json) {
         ...(json?.context?.renderer || {}),
       },
       scene: {
-        background: asHexColor(json?.context?.scene?.background ?? "#0a0e27", 0x0a0e27),
-        fogColor: asHexColor(json?.context?.scene?.fogColor ?? "#0a0e27", 0x0a0e27),
+        background: json?.context?.scene?.background == null ? undefined : asHexColor(json.context.scene.background, 0x0a0e27),
+        fog: json?.context?.scene?.fog ?? true,
+        fogColor: json?.context?.scene?.fogColor == null ? undefined : asHexColor(json.context.scene.fogColor, 0x0a0e27),
         fogNear: Number(json?.context?.scene?.fogNear ?? 55),
         fogFar: Number(json?.context?.scene?.fogFar ?? 260),
       },
@@ -379,6 +380,17 @@ export async function runUniversalNetworkScene(config) {
 
   const _tmpV3a = new THREE.Vector3();
 
+  let activePanelTheme = null;
+  const explicitLabelColors = new WeakSet();
+  const applyLabelTheme = (label, theme) => {
+    if (!theme || explicitLabelColors.has(label)) return;
+    const { textMesh, backgroundMesh } = label.userData;
+    if (textMesh) textMesh.color = theme.labelColor;
+    if (backgroundMesh?.material) {
+      backgroundMesh.material.color.setHex(theme.labelBackgroundColor);
+      backgroundMesh.material.opacity = 0.9;
+    }
+  };
   const makeLabelSprite = makeLabelSpriteFactory({
     THREE,
     ...(config?.render?.labelSprite || {}),
@@ -769,6 +781,8 @@ export async function runUniversalNetworkScene(config) {
         if (labelText) {
           const labelColor = config.render.labelColor ? config.render.labelColor({ node, ctx }) : "#dde3ea";
           const spr = makeLabelSprite({ text: labelText, color: labelColor });
+          if (config.render.labelColor) explicitLabelColors.add(spr);
+          applyLabelTheme(spr, activePanelTheme);
 
           const off = config.render.labelOffset
             ? config.render.labelOffset({ THREE, node, ctx })

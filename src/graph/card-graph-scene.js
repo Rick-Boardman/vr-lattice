@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+import { findGraphSceneAppearance } from "./scene-appearance.js";
+import { getGraphSceneEditSurface, setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
+import { layoutCardBodyText } from "./card-body-layout.js";
+import { getTextRenderInfo, Text as TroikaText } from "troika-three-text";
+import { GRAPH_CAPTION_PALETTE, graphContrastColor, graphContrastRatio } from "./appearance-contrast.js";
+import { graphPanelTheme } from "./panel-theme.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
 import {
   applyGraphTroikaRenderSettings,
@@ -117,11 +123,17 @@ const DEFAULT_CARD_TITLE_FONT_SIZE_PX = 68;
 const DEFAULT_CARD_BADGE_FONT_SIZE_PX = 34;
 const DEFAULT_CARD_BODY_FONT_SIZE_PX = 28;
 const DEFAULT_EDGE_LABEL_FONT_SIZE_PX = 48;
+// Captions in card scenes sit above every edge stroke/arrow (maximum .55),
+// but remain below stacked node cards. Keep distinct edge caption priorities.
+const EDGE_CAPTION_RENDER_ORDER = { ordinary: 0.6, multiselected: 0.7, selected: 0.8 };
 const DEFAULT_EDGE_LABEL_WORLD_HEIGHT = 1.02;
 const DEFAULT_EDGE_LABEL_MIN_WORLD_WIDTH = 5.2;
 const NODE_STACK_RENDER_ORDER_STEP = 10;
 const DEFAULT_CARD_BADGE_TOP_PX = 24;
 const DEFAULT_CARD_BADGE_HORIZONTAL_GAP_PX = 14;
+const CARD_BADGE_RIGHT_INSET_PX = 48;
+const CARD_BADGE_TRAILING_COMFORT_PX = 4;
+const CARD_TITLE_BADGE_GAP_PX = 28;
 const DEFAULT_CARD_BADGE_MIN_HEIGHT_PX = 54;
 const DEFAULT_CARD_BADGE_MIN_WIDTH_PX = 120;
 const DEFAULT_CARD_BODY_STRIP_FONT_SIZE_PX = 22;
@@ -129,6 +141,14 @@ const DEFAULT_CARD_BODY_STRIP_BAR_HEIGHT_PX = 16;
 const DEFAULT_CARD_BODY_STRIP_BOTTOM_PADDING_PX = 54;
 const DEFAULT_CARD_HIGHLIGHT_COLOR = 0x78deff;
 const DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR = 0xe8f7ff;
+const CARD_APPEARANCE = {
+  light: { world: graphPanelTheme("light").background, body: 0xf8fafc, inactive: 0xe9eef4, bodyText: 0x30465f, border: 0x73889e,
+    notesTrack: 0xdce8f3, notesThumb: 0x506f8d,
+    rule: "#d5dfe9", selected: 0x305477, hover: 0x537ea3, ...GRAPH_CAPTION_PALETTE.light },
+  dark: { world: graphPanelTheme("dark").background, body: 0x192636, inactive: 0x15202d, bodyText: 0xd4dfeb, border: 0x748aa4,
+    notesTrack: 0x344c64, notesThumb: 0xa9c7e3,
+    rule: "#3c5066", selected: 0x96b9d9, hover: 0x718da8, ...GRAPH_CAPTION_PALETTE.dark },
+};
 const GRAPH_NODE_TITLE_FONT_FAMILY = "monospace";
 const GRAPH_NODE_TITLE_FONT = buildGraphNodeTitleFont(DEFAULT_CARD_TITLE_FONT_SIZE_PX);
 const GRAPH_NODE_SHAPE_TITLE_FONT = buildGraphNodeTitleFont(116);
@@ -322,7 +342,9 @@ export function projectPlanarGraphPositionsToSphere({
  * @param {(edge: object) => number} [options.getActionEdgeOpacity] Action-edge opacity accessor.
  * @param {(edge: object) => number} [options.getDataWireOpacity] Data-wire opacity accessor.
  * @param {(edge: object) => string | null} [options.getEdgeLabel] Edge-label accessor.
+ * @param {"light" | "dark" | null} [options.appearanceMode] Explicit card/caption mode. Omit to inherit the native owning scene's mode; pass null for legacy styling.
  * @param {(edge: object) => string} [options.getEdgeSelectionKey] Edge-selection key accessor used by setSelectedEdgeKey.
+ * @param {boolean} [options.enableSavedBodyScroll] Render a scrollbar for overflowing authored card bodies and expose an input target via getBodyScrollTarget.
  * @param {CardGraphSceneSphereOptions} [options.sphere] Sphere-layout overrides.
  * @returns {{ root: any, graph: { nodes: Array<object>, edges: Array<object> }, nodeHitTargets: Array<any>, portHitTargets: Array<any>, edgeHitTargets: Array<any>, actionHandleHitTargets: Array<any>, getNodeIds: () => Array<string>, getNodeById: (nodeId: string) => object | null, getNodeMeshById: (nodeId: string) => any, setSelectedIds: (nextIds: Array<string> | Set<string> | null | undefined) => void, setSelectedEdgeKey: (nextKey: string | null | undefined) => void, setHoveredId: (nextId: string | null | undefined) => void, getFlatBounds: (targetBox?: any) => any, getNodeFlatPosition: (nodeId: string) => any, translateFlatPositions: (nodeIds: Array<string> | Set<string>, delta: any) => void, setLayoutMode: (nextMode: string) => void, getLayoutMode: () => string, syncNode: (nodeId: string | null | undefined) => void, update: (dt?: number) => void, dispose: () => void }} Shared graph-scene controller.
  * Side effects: allocates card textures, card/port/edge meshes, adds the root group to the supplied scene parent, mutates geometry when nodes move, and disposes all created resources when torn down.
@@ -337,6 +359,8 @@ export function createCardGraphScene({
   camera = null,
   layoutMode = "flat",
   style = {},
+  appearanceMode,
+  enableSavedBodyScroll = false,
   getNodeTitle = (node) => String(node?.name ?? node?.label ?? node?.id ?? "Node"),
   getNodeLeadingBadge = () => null,
   getNodeSubtitle = (node) => String(node?.connector ?? node?.type ?? node?.kind ?? ""),
@@ -373,6 +397,10 @@ export function createCardGraphScene({
   const root = new THREE.Group();
   root.name = "cardGraphScene";
   rootParent.add(root);
+  const appearanceSource = appearanceMode === undefined ? findGraphSceneAppearance(rootParent) : null;
+  const initialAppearanceMode = appearanceMode ?? appearanceSource?.getMode();
+  let appearance = initialAppearanceMode === "light" || initialAppearanceMode === "dark"
+    ? CARD_APPEARANCE[initialAppearanceMode] : null;
 
   const cardWidth = Number(style.cardWidth ?? DEFAULT_CARD_WIDTH);
   const cardHeight = Number(style.cardHeight ?? DEFAULT_CARD_HEIGHT);
@@ -458,6 +486,7 @@ export function createCardGraphScene({
   const nodeHitTargets = [];
   const portHitTargets = [];
   const edgeHitTargets = [];
+  const editHitTargets = [];
   const actionHandleHitTargets = [];
   const tempBox = new THREE.Box3();
   const worldStart = new THREE.Vector3();
@@ -507,6 +536,8 @@ export function createCardGraphScene({
       THREE,
       Text,
       node,
+      appearance,
+      enableSavedBodyScroll,
       cardWidth,
       cardHeight,
       cardCanvasWidth,
@@ -629,11 +660,14 @@ export function createCardGraphScene({
         fontSizePx: edgeLabelFontSizePx,
         worldHeight: edgeLabelWorldHeight,
         minWorldWidth: edgeLabelMinWorldWidth,
+        appearance,
+        editTarget: { kind: "edge", edge, field: "label" },
       })
       : null;
     if (labelSprite) {
-      labelSprite.setRenderOrder?.(0.2);
+      labelSprite.setRenderOrder?.(EDGE_CAPTION_RENDER_ORDER.ordinary);
       root.add(labelSprite);
+      editHitTargets.push(labelSprite.userData.backgroundMesh);
     }
 
     root.add(line);
@@ -665,6 +699,31 @@ export function createCardGraphScene({
 
   function getNodeMeshById(nodeId) {
     return nodeRecords.get(String(nodeId ?? ""))?.cardMesh ?? null;
+  }
+
+  // Host apps may expose an accessible read-only control over their projection
+  // of this surface. It does not participate in graph picking or wheel input.
+  function getBodyOverflowTarget(nodeId) {
+    const record = nodeRecords.get(nodeId);
+    const mesh = record?.cardMesh;
+    if (record?.shape !== "card" || !mesh?.parent ||
+        !record.textMeshes.bodyText?.userData.graphBodyFlow?.overflow) return null;
+    for (let object = mesh; object; object = object.parent) if (!object.visible) return null;
+    const surface = getGraphSceneEditSurface(mesh, "body");
+    return surface ? { kind: "node", id: nodeId, node: record.node, field: "body", surface } : null;
+  }
+
+  function getBodyScrollTarget(nodeId) {
+    const record = nodeRecords.get(nodeId);
+    const target = getBodyOverflowTarget(nodeId);
+    const scroll = record?.bodyScroll;
+    if (!target || !scroll?.track.visible || !record.textMeshes.bodyText?.visible) return null;
+    return { ...target, railX: scroll.track.position.x,
+      railWidth: scroll.track.scale.x, railTop: scroll.top, railBottom: scroll.bottom,
+      fraction: scroll.offset / scroll.max,
+      thumbFraction: scroll.thumb.scale.y / scroll.track.scale.y,
+      scrollBy: fraction => { scroll.offset = Math.max(0, Math.min(scroll.max, scroll.offset + fraction * (scroll.top - scroll.bottom))); paintBodyScroll(record); },
+      scrollTo: fraction => { scroll.offset = Math.max(0, Math.min(1, fraction)) * scroll.max; paintBodyScroll(record); } };
   }
 
   function resolveLayoutPosition(nodeId) {
@@ -1021,6 +1080,15 @@ export function createCardGraphScene({
 
   function syncHighlights() {
     for (const record of nodeRecords.values()) {
+      if (appearance && record.markerAppearance !== appearance) {
+        const useLightSurface = appearance === CARD_APPEARANCE.light;
+        for (const marker of [...record.inputPorts, ...record.outputPorts, ...record.actionHandles]) {
+          const color = graphContrastColor(marker.baseColor, useLightSurface ? appearance.world : appearance.body, 4,
+            1, useLightSurface ? "darker" : "lighter");
+          marker.mesh.material.color.setHex(color);
+        }
+        record.markerAppearance = appearance;
+      }
       const isSelected = selectedIds.has(record.node.id);
       const isHovered = hoveredId === record.node.id;
       syncActionHandlePresentation(record, isSelected);
@@ -1028,11 +1096,18 @@ export function createCardGraphScene({
       const baseBorder = asHexColor(getNodeBorderColor(record.node), baseAccent);
       applyNodeDepthPriority(record, isSelected);
       if (record.shape === "card") {
+        if (appearance) {
+          record.shadowMesh.visible = false;
+          const borderColor = isSelected ? appearance.selected : isHovered ? appearance.hover : appearance.border;
+          if (record.cardStrokeColor !== borderColor) paintThemedCardBorder(record, borderColor);
+          record.cardMesh.scale.setScalar(1);
+          continue;
+        }
         if (record.shadowMesh?.material?.color?.setHex) {
           if (isSelected) {
-            nodeHighlightColor.setHex(DEFAULT_CARD_HIGHLIGHT_COLOR);
+            nodeHighlightColor.setHex(appearance?.selected ?? DEFAULT_CARD_HIGHLIGHT_COLOR);
           } else if (isHovered) {
-            nodeHighlightColor.setHex(DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR);
+            nodeHighlightColor.setHex(appearance?.hover ?? DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR);
           } else {
             nodeHighlightColor.setHex(baseBorder);
             nodeHighlightColor.lerp(edgeSelectedColor, 0.16);
@@ -1040,9 +1115,28 @@ export function createCardGraphScene({
           record.shadowMesh.material.color.setHex(nodeHighlightColor.getHex());
         }
         record.shadowMesh.visible = isSelected || isHovered;
-        record.shadowMesh.material.opacity = isSelected ? 0.82 : isHovered ? 0.44 : 0.08;
-        record.shadowMesh.scale.setScalar(isSelected ? 1.035 : isHovered ? 1.018 : 1);
+        record.shadowMesh.material.opacity = isSelected ? (appearance ? 0.9 : 0.82) : isHovered ? 0.44 : 0.08;
+        record.shadowMesh.scale.setScalar(isSelected ? (appearance ? 1 : 1.035) : isHovered ? (appearance ? 0.993 : 1.018) : 1);
         record.cardMesh.scale.setScalar(1);
+        continue;
+      }
+      if (appearance) {
+        paintThemedCompactNode(record, baseAccent, baseBorder,
+          isSelected ? appearance.selected : isHovered ? appearance.hover : appearance.border);
+        record.shadowMesh.visible = false;
+        record.shadowMesh.scale.setScalar(1);
+        record.cardMesh.scale.setScalar(1);
+        record.labelMesh?.scale?.setScalar(1);
+        continue;
+      }
+      if (record.shape === "diamond") {
+        // Paint inside the actual face rather than scaling a same-colored mesh
+        // behind it; the hit surface and connector geometry must stay put.
+        paintDiamondBorder(record, baseAccent, baseBorder, isSelected ? "selected" : isHovered ? "hover" : "normal");
+        record.shadowMesh.visible = false;
+        record.shadowMesh.scale.setScalar(1);
+        record.cardMesh.scale.setScalar(1);
+        record.labelMesh?.scale?.setScalar(1);
         continue;
       }
         const decoratedShapeTexture = shouldUseDecoratedShapeTexture(record.shape);
@@ -1070,43 +1164,45 @@ export function createCardGraphScene({
         && selectedIds.has(String(record.edge?.fromId ?? ""))
         && selectedIds.has(String(record.edge?.toId ?? ""));
       const isSelectedEdge = isExplicitlySelectedEdge || isMultiSelectedEdge;
-      edgeBaseColor.setHex(asHexColor(record.color, 0xffffff));
+      const sourceOpacity = Number(record.opacity ?? 0.88);
+      const baseOpacity = appearance && sourceOpacity > 0 ? Math.max(sourceOpacity, 0.92) : sourceOpacity;
+      const displayOpacity = isSelectedEdge ? Math.min(1, baseOpacity + (isExplicitlySelectedEdge ? 0.22 : 0.14)) : baseOpacity;
+      if (appearance && record.appearance !== appearance) {
+        record.edgeColor = graphContrastColor(record.color, appearance.world, 3.8, baseOpacity);
+        record.edgeSelectedColor = graphContrastColor(record.color, appearance.world, 5.3, 1);
+        record.appearance = appearance;
+      }
+      edgeBaseColor.setHex(appearance ? (isSelectedEdge ? record.edgeSelectedColor : record.edgeColor) : asHexColor(record.color, 0xffffff));
 
       if (record.line?.material?.color?.copy) {
         record.line.material.color.copy(edgeBaseColor);
-        if (isSelectedEdge) {
+        if (isSelectedEdge && !appearance) {
           record.line.material.color.lerp(edgeSelectedColor, isExplicitlySelectedEdge ? 0.58 : 0.34);
         }
       }
       if (record.arrow?.material?.color?.copy) {
         record.arrow.material.color.copy(edgeBaseColor);
-        if (isSelectedEdge) {
+        if (isSelectedEdge && !appearance) {
           record.arrow.material.color.lerp(edgeSelectedColor, isExplicitlySelectedEdge ? 0.58 : 0.34);
         }
       }
       if (record.reverseArrow?.material?.color?.copy) {
         record.reverseArrow.material.color.copy(edgeBaseColor);
-        if (isSelectedEdge) {
+        if (isSelectedEdge && !appearance) {
           record.reverseArrow.material.color.lerp(edgeSelectedColor, isExplicitlySelectedEdge ? 0.58 : 0.34);
         }
       }
       if (record.line?.material) {
-        record.line.material.opacity = isSelectedEdge
-          ? Math.min(1, Number(record.opacity ?? 0.88) + (isExplicitlySelectedEdge ? 0.22 : 0.14))
-          : Number(record.opacity ?? 0.88);
+        record.line.material.opacity = displayOpacity;
       }
       if (record.arrow?.material) {
-        record.arrow.material.opacity = isSelectedEdge
-          ? Math.min(1, Number(record.opacity ?? 0.88) + (isExplicitlySelectedEdge ? 0.22 : 0.14))
-          : Number(record.opacity ?? 0.88);
+        record.arrow.material.opacity = displayOpacity;
       }
       if (record.arrow?.scale?.setScalar) {
         record.arrow.scale.setScalar(isExplicitlySelectedEdge ? 1.08 : isMultiSelectedEdge ? 1.04 : 1);
       }
       if (record.reverseArrow?.material) {
-        record.reverseArrow.material.opacity = isSelectedEdge
-          ? Math.min(1, Number(record.opacity ?? 0.88) + (isExplicitlySelectedEdge ? 0.22 : 0.14))
-          : Number(record.opacity ?? 0.88);
+        record.reverseArrow.material.opacity = displayOpacity;
       }
       if (record.reverseArrow?.scale?.setScalar) {
         record.reverseArrow.scale.setScalar(isExplicitlySelectedEdge ? 1.08 : isMultiSelectedEdge ? 1.04 : 1);
@@ -1117,7 +1213,8 @@ export function createCardGraphScene({
         record.reverseArrow.renderOrder = isExplicitlySelectedEdge ? 0.55 : isMultiSelectedEdge ? 0.4 : 0.1;
       }
       if (record.labelSprite) {
-        record.labelSprite.setRenderOrder?.(isExplicitlySelectedEdge ? 0.65 : isMultiSelectedEdge ? 0.5 : 0.2);
+        record.labelSprite.setRenderOrder?.(isExplicitlySelectedEdge ? EDGE_CAPTION_RENDER_ORDER.selected :
+          isMultiSelectedEdge ? EDGE_CAPTION_RENDER_ORDER.multiselected : EDGE_CAPTION_RENDER_ORDER.ordinary);
         if (record.labelBaseScale && record.labelSprite.scale?.copy) {
           record.labelSprite.scale.copy(record.labelBaseScale);
           if (isSelectedEdge) {
@@ -1171,6 +1268,9 @@ export function createCardGraphScene({
       ? false
       : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true);
     applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
+    for (const item of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
+      applyObjectDepthSettings(item, cardDepthTest, false);
+    }
 
     for (const textMesh of Object.values(record.textMeshes ?? {})) {
       if (!textMesh) continue;
@@ -1209,6 +1309,10 @@ export function createCardGraphScene({
     record.textRoot.renderOrder = renderBase;
     record.shadowMesh.renderOrder = renderBase + 1;
     record.cardMesh.renderOrder = renderBase + 2;
+    if (record.bodyScroll) {
+      record.bodyScroll.track.renderOrder = renderBase + 2.43;
+      record.bodyScroll.thumb.renderOrder = renderBase + 2.44;
+    }
     for (const textMesh of Object.values(record.textMeshes ?? {})) {
       if (!textMesh) continue;
       const baseRenderOrder = Number(textMesh.userData?.graphBaseRenderOrder);
@@ -1246,6 +1350,16 @@ export function createCardGraphScene({
   function syncNode(nodeId) {
     const record = nodeRecords.get(String(nodeId ?? ""));
     if (!record) return;
+    redrawNode(record);
+    syncHighlights();
+    for (const edgeRecord of edgeRecords) {
+      if (edgeRecord.edge.fromId === record.node.id || edgeRecord.edge.toId === record.node.id) {
+        updateEdgePlacement(edgeRecord);
+      }
+    }
+  }
+
+  function redrawNode(record) {
     updateCardTexture({
       record,
       getNodeTitle,
@@ -1258,12 +1372,25 @@ export function createCardGraphScene({
       getNodeBodyColor,
       getNodeBorderColor,
     });
-    syncHighlights();
-    for (const edgeRecord of edgeRecords) {
-      if (edgeRecord.edge.fromId === record.node.id || edgeRecord.edge.toId === record.node.id) {
-        updateEdgePlacement(edgeRecord);
-      }
+  }
+
+  function setAppearanceMode(mode) {
+    if (mode !== "light" && mode !== "dark") return false;
+    const next = CARD_APPEARANCE[mode];
+    if (appearance === next) return true;
+    appearance = next;
+    for (const record of nodeRecords.values()) {
+      record.appearance = next;
+      record.cardStrokeColor = null;
+      record.compactOutline = null;
+      if (record.texture.colorSpace !== THREE.SRGBColorSpace) record.texture.colorSpace = THREE.SRGBColorSpace;
+      redrawNode(record);
     }
+    for (const edge of edgeRecords) {
+      if (edge.labelSprite) applyEdgeLabelAppearance(THREE, edge.labelSprite, next);
+    }
+    syncHighlights();
+    return true;
   }
 
   function setSelectedIds(nextIds) {
@@ -1496,6 +1623,7 @@ export function createCardGraphScene({
   }
 
   update();
+  const unsubscribeAppearance = appearanceSource?.subscribe(({ key }) => setAppearanceMode(key));
 
   return {
     root,
@@ -1503,10 +1631,13 @@ export function createCardGraphScene({
     nodeHitTargets,
     portHitTargets,
     edgeHitTargets,
+    editHitTargets,
     actionHandleHitTargets,
     getNodeIds: () => graph.nodes.map((node) => node.id),
     getNodeById,
     getNodeMeshById,
+    getBodyOverflowTarget,
+    getBodyScrollTarget,
     bringNodeIdsToFront,
     setSelectedIds,
     setSelectedEdgeKey,
@@ -1526,10 +1657,12 @@ export function createCardGraphScene({
       right: new THREE.Vector3().crossVectors(sphereOptions.up, sphereOptions.forward).normalize(),
     }),
     setLayoutMode,
+    setAppearanceMode,
     getLayoutMode: () => currentLayoutMode,
     syncNode,
     update,
     dispose() {
+      unsubscribeAppearance?.();
       rootParent.remove?.(root);
       arrowGeometry.dispose?.();
       edgePreview?.line.geometry?.dispose?.();
@@ -1553,8 +1686,10 @@ export function createCardGraphScene({
 
 function createNodeRecord({
   THREE,
+  enableSavedBodyScroll,
   Text,
   node,
+  appearance,
   cardWidth,
   cardHeight,
   cardCanvasWidth,
@@ -1597,6 +1732,9 @@ function createNodeRecord({
   canvas.width = cardCanvasWidth;
   canvas.height = cardCanvasHeight;
   const texture = new THREE.CanvasTexture(canvas);
+  // CSS colors written into the canvas are sRGB. Treating them as linear washes out
+  // the colored ribbons and badge fills when the renderer converts to sRGB output.
+  if (appearance || shape === "diamond") texture.colorSpace = THREE.SRGBColorSpace;
   configureCanvasTexture(THREE, texture, canvas);
 
   const shadowMesh = new THREE.Mesh(
@@ -1637,6 +1775,7 @@ function createNodeRecord({
   cardMesh.userData.id = node.id;
   cardMesh.userData.node = node;
   cardMesh.userData.graphHit = { kind: "node", id: node.id, node };
+  cardMesh.userData.graphEditRegion = { shape, bodyThreshold: null };
 
   const textMeshes = createNodeTextMeshes({ Text, nodeId: node.id });
 
@@ -1684,6 +1823,9 @@ function createNodeRecord({
 
   const record = {
     node,
+    THREE,
+    enableSavedBodyScroll,
+    appearance,
     root,
     canvas,
     texture,
@@ -1898,7 +2040,10 @@ function resolveCardTextBlockHeightPx(fontSizePx, lineGapPx, lineCount) {
 
 function resolveCardBadgeLayoutPx(fontSizePx) {
   const resolvedFontSizePx = Math.max(1, Number(fontSizePx) || DEFAULT_CARD_BADGE_FONT_SIZE_PX);
-  const sidePaddingPx = Math.max(30, Math.round(resolvedFontSizePx * 0.7));
+  const baseSidePaddingPx = Math.max(30, Math.round(resolvedFontSizePx * 0.7));
+  // Scale the extra breathing room with the badge type, not its text length.
+  const extraSidePaddingPx = Math.max(14, Math.round(resolvedFontSizePx * 0.34));
+  const sidePaddingPx = baseSidePaddingPx + extraSidePaddingPx;
   const verticalPaddingPx = Math.max(10, Math.round(resolvedFontSizePx * 0.28));
   const heightPx = Math.max(DEFAULT_CARD_BADGE_MIN_HEIGHT_PX, Math.round(resolvedFontSizePx + verticalPaddingPx * 2));
   const radiusPx = Math.max(18, Math.round(heightPx * 0.45));
@@ -1906,6 +2051,7 @@ function resolveCardBadgeLayoutPx(fontSizePx) {
   return {
     topPx: DEFAULT_CARD_BADGE_TOP_PX,
     sidePaddingPx,
+    maxWidthPx: 420 + extraSidePaddingPx * 2,
     heightPx,
     radiusPx,
     gapPx,
@@ -1953,6 +2099,138 @@ function setNodeTextMesh(record, textMesh, {
   });
 }
 
+// Troika anchors its advance box, not the actual visible glyphs. Align
+// title ink and pill ink independently, without changing their hit geometry.
+function alignCardHeaderInk(record, mesh, { xPx, yPx, titleBounds = null } = {}) {
+  if (!mesh?.visible) return;
+  const center = {
+    x: pxToCardLocalX(record, xPx) - (titleBounds ? 0 : pxToCardWorldSize(record, CARD_BADGE_TRAILING_COMFORT_PX)),
+    y: Number.isFinite(yPx) ? pxToCardLocalY(record, yPx) : mesh.position.y,
+  };
+  const apply = (bounds) => {
+    mesh.position.x = bounds.center.x - bounds.dx;
+    mesh.position.y = bounds.center.y - bounds.dy;
+    if (bounds.clip) {
+      const { left, right, top, bottom } = bounds.clip;
+      mesh.clipRect = [left - mesh.position.x, bottom - mesh.position.y,
+        right - mesh.position.x, top - mesh.position.y];
+    }
+  };
+  if (!(mesh instanceof TroikaText)) {
+    apply({ center, dx: 0, dy: 0, clip: titleBounds });
+    return;
+  }
+  const params = {
+    text: mesh.text, font: mesh.font, unicodeFontsURL: mesh.unicodeFontsURL,
+    fontWeight: mesh.fontWeight, fontSize: mesh.fontSize, anchorX: mesh.anchorX,
+    anchorY: mesh.anchorY, textAlign: mesh.textAlign, lineHeight: mesh.lineHeight,
+    maxWidth: mesh.maxWidth, whiteSpace: mesh.whiteSpace,
+    sdfGlyphSize: mesh.sdfGlyphSize, sdfExponent: mesh.sdfExponent,
+  };
+  const key = JSON.stringify([params, Boolean(titleBounds), Number.isFinite(yPx)]);
+  let bounds = mesh.userData.graphHeaderInkBounds;
+  if (bounds?.key !== key) {
+    bounds = { key, center, clip: titleBounds, dx: 0, dy: 0 };
+    mesh.userData.graphHeaderInkBounds = bounds;
+    getTextRenderInfo(params, ({ visibleBounds }) => {
+      if (mesh.userData.graphHeaderInkBounds !== bounds || !mesh.parent || !mesh.visible) return;
+      const [left, bottom, right, top] = visibleBounds;
+      if (Number.isFinite(left) && Number.isFinite(right)) bounds.dx = bounds.clip ? left : (left + right) / 2;
+      if (Number.isFinite(yPx) && Number.isFinite(bottom) && Number.isFinite(top)) bounds.dy = (bottom + top) / 2;
+      apply(bounds);
+    });
+  }
+  bounds.center = center;
+  bounds.clip = titleBounds;
+  apply(bounds);
+}
+
+// The authored string is independent of its one-line scene representation.
+const cardHeaderGraphemes = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+const normalizeCardHeaderLine = value => String(value ?? "").trim().replace(/\s+/g, " ");
+
+function nativeCardHeaderInkWidth(record, mesh, text, fontSizePx, rasterFont) {
+  if (!text) return Promise.resolve(0);
+  if (!(mesh instanceof TroikaText)) {
+    const ctx = record.canvas.getContext("2d");
+    ctx.save();
+    ctx.font = rasterFont;
+    const metrics = ctx.measureText(text);
+    ctx.restore();
+    return Promise.resolve(metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight || metrics.width);
+  }
+  return new Promise(resolve => getTextRenderInfo({
+    text, font: mesh.font, unicodeFontsURL: mesh.unicodeFontsURL, fontWeight: "bold",
+    fontSize: pxToCardWorldSize(record, fontSizePx), anchorX: "left", anchorY: "middle",
+    whiteSpace: "nowrap", sdfGlyphSize: mesh.sdfGlyphSize, sdfExponent: mesh.sdfExponent,
+  }, ({ visibleBounds, blockBounds }) => {
+    const box = visibleBounds?.every(Number.isFinite) ? visibleBounds : blockBounds;
+    const ratio = record.canvas.width / (2 * record.shapeHalfWidth);
+    resolve(Math.max(0, (box?.[2] - box?.[0]) * ratio || 0));
+  }));
+}
+
+async function fitMeasuredCardHeaderLine(value, limit, measure, fullWidth) {
+  if (!value || limit <= 0) return { text: "", width: 0 };
+  const entire = fullWidth ?? await measure(value);
+  if (entire <= limit + 1e-6) return { text: value, width: entire };
+  const ellipsis = "..."; // The bundled graph font always has the period glyph.
+  let best = { text: ellipsis, width: await measure(ellipsis) };
+  if (best.width > limit) return { text: "", width: 0 };
+  const chars = cardHeaderGraphemes
+    ? Array.from(cardHeaderGraphemes.segment(value), ({ segment }) => segment) : Array.from(value);
+  let left = 1;
+  let right = chars.length - 1;
+  while (left <= right) {
+    const length = (left + right) >> 1;
+    const text = chars.slice(0, length).join("").trimEnd() + ellipsis;
+    const width = await measure(text);
+    if (width <= limit + 1e-6) {
+      best = { text, width };
+      left = length + 1;
+    } else right = length - 1;
+  }
+  return best;
+}
+
+async function computeNativeCardHeader(record, config) {
+  const { title, titleFont, titleFontSizePx, badgeEntries, badgeFont, badgeFontSizePx, badgeLayout, width, titleLeft } = config;
+  const normalizedTitle = normalizeCardHeaderLine(title);
+  const normalizedBadges = badgeEntries.map(entry => normalizeCardHeaderLine(entry.text));
+  // Account for the optical left shift and the visible Troika outline as well
+  // as the base padding. Narrow cards shorten text instead of stealing this inset.
+  const padding = badgeLayout.sidePaddingPx + CARD_BADGE_TRAILING_COMFORT_PX + badgeFontSizePx * 0.035 + 1;
+  const measureTitle = value => nativeCardHeaderInkWidth(record, record.textMeshes.titleText, value, titleFontSizePx, titleFont);
+  const measureBadge = (index, value) => nativeCardHeaderInkWidth(record, badgeEntries[index].mesh, value, badgeFontSizePx, badgeFont);
+  const count = badgeEntries.length;
+  const natural = await Promise.all(normalizedBadges.map((label, i) => measureBadge(i, label)));
+  const gap = count ? CARD_TITLE_BADGE_GAP_PX : 0;
+  const innerWidth = width - titleLeft - CARD_BADGE_RIGHT_INSET_PX;
+  const groupBudget = Math.max(0, innerWidth - gap - Math.max(titleFontSizePx * 2, padding)
+    - badgeLayout.gapPx * Math.max(0, count - 1));
+  const demand = natural.map(ink => Math.max(DEFAULT_CARD_BADGE_MIN_WIDTH_PX, ink + padding * 2));
+  // Give smaller pills their natural width first; spillover is shared only by
+  // labels that genuinely compete for the remaining header space.
+  const allocation = [];
+  let remaining = groupBudget;
+  const shortestFirst = demand.map((size, i) => [size, i]).sort((a, b) => a[0] - b[0]);
+  for (let j = 0; j < count; j += 1) {
+    const [size, i] = shortestFirst[j];
+    allocation[i] = Math.min(size, remaining / (count - j));
+    remaining -= allocation[i];
+  }
+  const badges = await Promise.all(normalizedBadges.map(async (label, i) => {
+    const pillWidth = allocation[i];
+    const fitted = await fitMeasuredCardHeaderLine(label, pillWidth - padding * 2, value => measureBadge(i, value), natural[i]);
+    return { text: fitted.text, pillWidth };
+  }));
+  const badgeGroup = badges.reduce((sum, entry) => sum + entry.pillWidth, 0)
+    + badgeLayout.gapPx * Math.max(0, count - 1);
+  const titleWidth = Math.max(1, innerWidth - gap - badgeGroup);
+  const fittedTitle = await fitMeasuredCardHeaderLine(normalizedTitle, titleWidth - 1, measureTitle);
+  return { title: fittedTitle.text, titleWidth, badges };
+}
+
 function createPorts({ THREE, node, ports, side, anchorWidth, anchorHeight, portRadius, getPortColor }) {
   const list = Array.isArray(ports) && ports.length ? ports : [];
   const total = Math.max(1, list.length);
@@ -1981,6 +2259,7 @@ function createPorts({ THREE, node, ports, side, anchorWidth, anchorHeight, port
       key: String(port?.key ?? port?.name ?? `${side}-${index}`),
       mesh,
       port,
+      baseColor: color,
     };
   });
 }
@@ -2043,10 +2322,58 @@ function createActionHandle({ THREE, node, role, x, y, z, radius, color }) {
     node,
     role,
   };
-  return { role, mesh, radius, homePosition: mesh.position.clone() };
+  return { role, mesh, radius, baseColor: color, homePosition: mesh.position.clone() };
 }
 
-function updateCardTexture({
+function paintBodyScroll(record) {
+  const bar = record.bodyScroll;
+  const body = record.textMeshes.bodyText;
+  if (!bar || !body) return;
+  const layout = body.userData.graphBodyFlow;
+  const shown = !!layout?.overflow && bar.max > 0;
+  bar.track.visible = bar.thumb.visible = shown;
+  if (!shown) return;
+  body.position.y = bar.top + bar.offset;
+  body.clipRect = [0, bar.bottom - bar.top - bar.offset, bar.textWidth, -bar.offset];
+  const height = bar.top - bar.bottom;
+  const thumbHeight = Math.max(height * 0.12, height * height / (height + bar.max));
+  bar.thumb.scale.set(bar.track.scale.x * 0.67, thumbHeight, 1);
+  bar.thumb.position.y = bar.top - thumbHeight / 2 - (height - thumbHeight) * bar.offset / bar.max;
+}
+
+function setBodyScroll(record, widthPx, bodyTop, bodyBottom, textWidth, max) {
+  const body = record.textMeshes.bodyText;
+  let bar = record.bodyScroll;
+  if (!bar && max > 0) {
+    const make = kind => {
+      const mesh = new record.THREE.Mesh(new record.THREE.PlaneGeometry(1, 1),
+        new record.THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, depthTest: record.cardMesh.material.depthTest }));
+      mesh.name = `card-notes-${kind}:${record.node.id}`;
+      mesh.renderOrder = record.cardMesh.renderOrder + (kind === "track" ? 0.43 : 0.44);
+      record.root.add(mesh);
+      return mesh;
+    };
+    bar = record.bodyScroll = { track: make("track"), thumb: make("thumb"), offset: 0 };
+  }
+  if (!bar) return;
+  const top = pxToCardLocalY(record, bodyTop);
+  const bottom = pxToCardLocalY(record, bodyBottom);
+  const x = pxToCardLocalX(record, widthPx - 48);
+  bar.track.material.color.setHex(record.appearance?.notesTrack ?? 0x344c64);
+  bar.thumb.material.color.setHex(record.appearance?.notesThumb ?? 0xa9c7e3);
+  bar.track.position.set(x, (top + bottom) / 2, 0.030);
+  bar.thumb.position.set(x, top, 0.033);
+  bar.track.scale.set(pxToCardWorldSize(record, 59), top - bottom, 1);
+  Object.assign(bar, { top, bottom, max, textWidth, offset: Math.min(max, bar.offset) });
+  if (max === 0) {
+    body.position.y = top;
+    body.clipRect = [0, bottom - top, textWidth, 0];
+  }
+  paintBodyScroll(record);
+}
+
+function updateCardTexture(options) {
+  const {
   record,
   getNodeTitle,
   getNodeLeadingBadge,
@@ -2057,14 +2384,16 @@ function updateCardTexture({
   getNodeAccentColor,
   getNodeBodyColor,
   getNodeBorderColor,
-}) {
+  } = options;
   const { canvas, texture, node } = record;
   const ctx = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
   const accent = asHexColor(getNodeAccentColor(node), 0x5f8fc9);
   const border = asHexColor(getNodeBorderColor(node), accent);
-  const body = asHexColor(getNodeBodyColor(node), 0x172232);
+  const appearance = record.appearance;
+  const body = appearance ? (node.enabled === false ? appearance.inactive : appearance.body)
+    : asHexColor(getNodeBodyColor(node), 0x172232);
   const title = String(getNodeTitle(node) ?? node.id ?? "Node");
   const subtitle = String(getNodeSubtitle(node) ?? "").trim();
   const leadingBadge = String(getNodeLeadingBadge(node) ?? "").trim();
@@ -2076,14 +2405,18 @@ function updateCardTexture({
   const headerTextColor = headerTextIsDark ? 0x08131d : 0xf5f8fb;
   const headerTextOutline = headerTextIsDark ? 0xffffff : 0x060a10;
   const headerTextOutlineOpacity = headerTextIsDark ? 0.28 : 0.5;
-  const badgeFillColor = headerTextIsDark ? "rgba(8,19,29,0.62)" : "rgba(13,21,33,0.42)";
+  const badgeTextColor = appearance ? 0xf7fbff : 0xeaf0f6;
+  const badgeFillColor = appearance
+    ? toCssColor(graphContrastColor(accent, badgeTextColor, 7, 1, "darker"))
+    : headerTextIsDark ? "rgba(8,19,29,0.62)" : "rgba(13,21,33,0.42)";
   const titleFont = record.cardTitleFont ?? GRAPH_NODE_TITLE_FONT;
   const cardHeaderHeightPx = Number(record.cardHeaderHeightPx ?? DEFAULT_HEADER_HEIGHT_PX);
   const titleLineGapPx = Number(record.cardTitleLineGapPx ?? GRAPH_NODE_TITLE_LINE_GAP_PX);
   const badgeFont = record.cardBadgeFont ?? buildGraphNodeTitleFont(DEFAULT_CARD_BADGE_FONT_SIZE_PX);
-  const bodyFont = record.cardBodyFont ?? `${DEFAULT_CARD_BODY_FONT_SIZE_PX}px monospace`;
+  const bodyFont = appearance ? `${record.cardBodyFontSizePx}px sans-serif`
+    : (record.cardBodyFont ?? `${DEFAULT_CARD_BODY_FONT_SIZE_PX}px monospace`);
   const titleFontSizePx = Number(record.cardTitleFontSizePx ?? DEFAULT_CARD_TITLE_FONT_SIZE_PX);
-  const badgeFontSizePx = Number(record.cardBadgeFontSizePx ?? DEFAULT_CARD_BADGE_FONT_SIZE_PX);
+  const badgeFontSizePx = Number(record.cardBadgeFontSizePx ?? DEFAULT_CARD_BADGE_FONT_SIZE_PX) * (appearance ? 1.28 : 1);
   const bodyFontSizePx = Number(record.cardBodyFontSizePx ?? DEFAULT_CARD_BODY_FONT_SIZE_PX);
   const bodyLineGapPx = Number(record.cardBodyLineGapPx ?? 34);
   const stripFontSizePx = Number(record.cardBodyStripFontSizePx ?? DEFAULT_CARD_BODY_STRIP_FONT_SIZE_PX);
@@ -2096,9 +2429,20 @@ function updateCardTexture({
   clearNodeTextMeshes(record);
 
   if (shape !== "card") {
+    setGraphSceneEditSurface(record.cardMesh, "title", {
+      left: -record.shapeHalfWidth * 0.58, right: record.shapeHalfWidth * 0.58,
+      bottom: -record.shapeHalfHeight * 0.43, top: record.shapeHalfHeight * 0.43,
+    }, record.textMeshes.shapeTitleText);
     const decoratedShapeTexture = shouldUseDecoratedShapeTexture(shape);
     ctx.clearRect(0, 0, width, height);
-    if (decoratedShapeTexture) {
+    if (appearance) {
+      const stroke = record.compactOutline?.color ?? appearance.border;
+      record.compactOutline = null;
+      paintThemedCompactNode(record, accent, border, stroke);
+    } else if (shape === "diamond") {
+      record.diamondBorderKey = null;
+      paintDiamondBorder(record, accent, border);
+    } else if (decoratedShapeTexture) {
       drawShapeNodeTexture({
         ctx,
         width,
@@ -2119,7 +2463,7 @@ function updateCardTexture({
       record.cardMesh.material.color.setHex(accent);
     }
     record.cardMesh.material.needsUpdate = true;
-    record.shadowMesh.visible = !decoratedShapeTexture;
+    record.shadowMesh.visible = !appearance && shape !== "diamond" && !decoratedShapeTexture;
     record.shadowMesh.material.color.setHex(border);
     record.shadowMesh.material.opacity = 1;
     record.shadowMesh.material.needsUpdate = true;
@@ -2158,10 +2502,15 @@ function updateCardTexture({
     leadingBadge ? { text: leadingBadge, mesh: record.textMeshes.leadingBadgeText } : null,
     badge ? { text: badge, mesh: record.textMeshes.statusBadgeText } : null,
   ].filter(Boolean);
-  const badgeMetrics = badgeEntries.map((entry) => ({
+  // Leave room for the title and keep the inter-pill gap independent of padding.
+  const titleLeft = appearance ? CARD_BADGE_RIGHT_INSET_PX : 36;
+  const badgeWidthBudget = Math.max(1, (width - titleLeft - CARD_BADGE_RIGHT_INSET_PX - 220 - 64
+    - badgeLayout.gapPx * Math.max(0, badgeEntries.length - 1)) / Math.max(1, badgeEntries.length));
+  let badgeMetrics = badgeEntries.map((entry) => ({
     ...entry,
     pillWidth: Math.min(
-      420,
+      badgeLayout.maxWidthPx,
+      badgeWidthBudget,
       Math.max(
         DEFAULT_CARD_BADGE_MIN_WIDTH_PX,
         Math.max(
@@ -2177,8 +2526,29 @@ function updateCardTexture({
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
-  const titleMaxWidth = Math.max(220, width - 72 - (badgeGroupWidth ? badgeGroupWidth + Math.max(64, badgeLayout.sidePaddingPx + badgeLayout.gapPx) : 48));
-  const titleLines = wrapTextLines(ctx, title, titleMaxWidth, 1);
+  let titleMaxWidth = Math.max(1, width - titleLeft - 36 - (badgeGroupWidth ? badgeGroupWidth + 64 + (CARD_BADGE_RIGHT_INSET_PX - 30) : 48));
+  // Canvas and the actual world font differ slightly. Keep the ellipsis within
+  // the visible title area, then clip only any exceptional glyph overhang.
+  let titleLines = wrapTextLines(ctx, title, titleMaxWidth * 0.92, 1);
+  if (appearance) {
+    const headerKey = JSON.stringify([title, leadingBadge, badge, titleFont, badgeFont, titleFontSizePx, badgeFontSizePx, width]);
+    if (record.nativeCardHeader?.key !== headerKey) {
+      const layout = { key: headerKey, result: null };
+      record.nativeCardHeader = layout;
+      void computeNativeCardHeader(record, { title, titleFont, titleFontSizePx, badgeEntries,
+        badgeFont, badgeFontSizePx, badgeLayout, width, titleLeft }).then(result => {
+        if (record.nativeCardHeader !== layout || !record.root.parent) return;
+        layout.result = result;
+        updateCardTexture(options);
+      });
+    }
+    const result = record.nativeCardHeader.result;
+    if (result) {
+      badgeMetrics = result.badges.map((entry, i) => ({ ...badgeEntries[i], ...entry }));
+      titleMaxWidth = result.titleWidth;
+      titleLines = [result.title];
+    }
+  }
   const titleBlockHeight = resolveCardTextBlockHeightPx(titleFontSizePx, titleLineGapPx, titleLines.length);
   const headerHeight = Math.max(
     cardHeaderHeightPx,
@@ -2187,90 +2557,206 @@ function updateCardTexture({
       + GRAPH_NODE_CARD_TITLE_BOTTOM_PADDING_PX,
     badgeLayout.topPx + badgeLayout.heightPx + 24,
   );
+  // Ray intersections are expressed in the original panel UV coordinates in
+  // both planar and spherical arrangements; v=1 is the top of the texture.
+  record.cardMesh.userData.graphEditRegion.bodyThreshold = 1 - Math.min(headerHeight, height) / height;
+  const editBounds = (leftPx, topPx, rightPx, bottomPx) => ({
+    left: pxToCardLocalX(record, leftPx),
+    top: pxToCardLocalY(record, topPx),
+    right: pxToCardLocalX(record, rightPx),
+    bottom: pxToCardLocalY(record, bottomPx),
+  });
+  const headerCenter = headerHeight * 0.5;
+  const titleEditHeight = titleBlockHeight + titleFontSizePx * 0.2;
+  const titleTop = appearance ? Math.max(4, headerCenter - titleEditHeight * 0.5) : GRAPH_NODE_CARD_TITLE_TOP_PX;
+  const titleBottom = Math.min(headerHeight - 4, titleTop + titleEditHeight);
+  const titleBounds = editBounds(titleLeft, titleTop, titleLeft + titleMaxWidth, titleBottom);
+  setGraphSceneEditSurface(record.cardMesh, "title", titleBounds, record.textMeshes.titleText);
+  const bodyTop = Math.min(height * 0.85, headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55)));
+  const bodyBottom = Math.max(bodyTop + 1, bodyStrip
+    ? height - stripBottomPaddingPx - Math.max(28, Math.round(stripFontSizePx * 2))
+    : height - 24);
+  setGraphSceneEditSurface(record.cardMesh, "body",
+    editBounds(36, bodyTop, width - 36, bodyBottom), record.textMeshes.bodyText);
 
   drawRoundedRect(ctx, 0, 0, width, height, radius, toCssColor(body));
-  drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);
+  if (!appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);
   drawRoundedRect(ctx, 0, 0, width, headerHeight, [radius, radius, 0, 0], toCssColor(accent));
 
-  ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fillRect(0, headerHeight, width, 6);
+  ctx.fillStyle = appearance?.rule ?? "rgba(255,255,255,0.08)";
+  ctx.fillRect(0, headerHeight, width, appearance ? 4 : 6);
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
   setNodeTextMesh(record, record.textMeshes.titleText, {
     text: titleLines.join("\n"),
-    xPx: 36,
-    yPx: GRAPH_NODE_CARD_TITLE_TOP_PX,
+    xPx: titleLeft,
+    yPx: appearance ? headerCenter : GRAPH_NODE_CARD_TITLE_TOP_PX,
     z: 0.032,
     fontSizePx: titleFontSizePx,
     lineGapPx: titleLineGapPx,
     maxWidthPx: titleMaxWidth,
-    color: headerTextColor,
+    color: appearance
+      ? (graphContrastRatio(0x08131d, accent) >= graphContrastRatio(0xffffff, accent) ? 0x08131d : 0xffffff)
+      : headerTextColor,
     fontWeight: "bold",
     textAlign: "left",
     anchorX: "left",
-    anchorY: "top",
-    outlineWidthPx: 6,
+    anchorY: appearance ? "middle" : "top",
+    outlineWidthPx: appearance ? 0 : 6,
     outlineColor: headerTextOutline,
     outlineOpacity: headerTextOutlineOpacity,
   });
+  if (record.textMeshes.titleText) {
+    record.textMeshes.titleText.whiteSpace = "nowrap";
+    if (appearance) {
+      alignCardHeaderInk(record, record.textMeshes.titleText, { xPx: titleLeft, yPx: headerCenter, titleBounds });
+    } else {
+      record.textMeshes.titleText.clipRect = [0, -pxToCardWorldSize(record, titleBottom - titleTop),
+        pxToCardLocalX(record, titleLeft + titleMaxWidth) - pxToCardLocalX(record, titleLeft), 0];
+    }
+  }
 
   if (badgeMetrics.length) {
-    let rightEdgeX = width - 30;
+    const badgeCenterY = appearance ? headerCenter : badgeLayout.centerYPx;
+    const badgeTop = appearance ? badgeCenterY - badgeLayout.heightPx * 0.5 : badgeLayout.topPx;
+    let rightEdgeX = width - CARD_BADGE_RIGHT_INSET_PX;
     for (let index = badgeMetrics.length - 1; index >= 0; index -= 1) {
       const entry = badgeMetrics[index];
       const x = rightEdgeX - entry.pillWidth;
-      drawRoundedRect(ctx, x, badgeLayout.topPx, entry.pillWidth, badgeLayout.heightPx, badgeLayout.radiusPx, badgeFillColor);
+      drawRoundedRect(ctx, x, badgeTop, entry.pillWidth, badgeLayout.heightPx, badgeLayout.radiusPx, badgeFillColor);
       setNodeTextMesh(record, entry.mesh, {
         text: entry.text,
         xPx: x + entry.pillWidth * 0.5,
-        yPx: badgeLayout.centerYPx,
+        yPx: badgeCenterY,
         z: 0.034,
         fontSizePx: badgeFontSizePx,
-        color: 0xeaf0f6,
+        color: badgeTextColor,
         fontWeight: "bold",
+        outlineWidthPx: appearance ? badgeFontSizePx * 0.035 : 0,
+        outlineColor: badgeTextColor,
         textAlign: "center",
         anchorX: "center",
         anchorY: "middle",
       });
+      alignCardHeaderInk(record, entry.mesh, { xPx: x + entry.pillWidth * 0.5, yPx: appearance ? badgeCenterY : undefined });
       rightEdgeX = x - badgeLayout.gapPx;
     }
   }
 
-  if (shape === "card" && bodyText) {
+  const prose = bodyText || subtitle.toUpperCase();
+  if (prose) {
     ctx.font = bodyFont;
-    const bodyLines = wrapTextLines(ctx, bodyText, width - 72, bodyStrip ? 3 : 4);
-    const bodyTopPx = headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55));
+    const bodyMesh = record.textMeshes.bodyText;
+    const textWidthWorld = pxToCardLocalX(record, width - 36) - pxToCardLocalX(record, 36);
+    const textHeightWorld = pxToCardWorldSize(record, bodyBottom - bodyTop);
+    const fontWorld = pxToCardWorldSize(record, bodyFontSizePx);
+    const lineHeight = bodyLineGapPx / bodyFontSizePx;
+    // CSS canvas units are only a fast first estimate. Neither the canvas font
+    // nor its x/y aspect is necessarily the one used by the Troika renderer.
+    const railGutter = record.enableSavedBodyScroll && bodyText ? pxToCardWorldSize(record, 82) : 0;
+    const initialWidth = textWidthWorld / fontWorld * bodyFontSizePx;
+    const flow = (maxWidth, bodyHeight = bodyBottom - bodyTop) => {
+      ctx.save();
+      ctx.font = bodyFont;
+      try {
+        let overflow = false;
+        const text = layoutCardBodyText(prose, {
+          width: maxWidth, height: bodyHeight, fontHeight: bodyFontSizePx,
+          lineGap: bodyLineGapPx, measure: text => ctx.measureText(text).width,
+          onOverflow: () => { overflow = Boolean(bodyText); },
+        }).join("\n");
+        return { text, overflow };
+      } finally {
+        ctx.restore();
+      }
+    };
+    const nativeBody = bodyMesh instanceof TroikaText;
+    const key = JSON.stringify([prose, Boolean(bodyText), railGutter, bodyFont, bodyMesh?.font, bodyMesh?.unicodeFontsURL,
+      fontWorld, lineHeight, initialWidth, textHeightWorld]);
+    if (bodyMesh && bodyMesh.userData.graphBodyFlow?.key !== key) {
+      if (record.bodyScroll && record.bodyScroll.prose !== prose) record.bodyScroll.offset = 0;
+      const layout = { key, ...(nativeBody ? { text: "", overflow: false } : flow(initialWidth)) };
+      bodyMesh.userData.graphBodyFlow = layout;
+      // Validate the actual glyph paths, including fallback fonts and final-line
+      // ellipsis, before ever displaying them. Reuse this result on mere repaints.
+      const verify = (maxWidth, bodyHeight, attempt = 0) => {
+        const { text: candidate, overflow } = flow(maxWidth, bodyHeight);
+        if (!candidate || attempt > 12) {
+          layout.overflow = overflow;
+          return;
+        }
+        getTextRenderInfo({
+          text: candidate, font: bodyMesh.font, unicodeFontsURL: bodyMesh.unicodeFontsURL,
+          fontSize: fontWorld, lineHeight, anchorX: "left", anchorY: "top", whiteSpace: "nowrap",
+          sdfGlyphSize: bodyMesh.sdfGlyphSize, sdfExponent: bodyMesh.sdfExponent,
+        }, ({ visibleBounds }) => {
+          if (bodyMesh.userData.graphBodyFlow !== layout || !bodyMesh.parent) return;
+          const [, bottom, right] = visibleBounds;
+          if (right > textWidthWorld || bottom < -textHeightWorld) {
+            verify(right > textWidthWorld ? maxWidth * Math.min(0.94, textWidthWorld / right) : maxWidth,
+              bottom < -textHeightWorld ? bodyHeight - bodyLineGapPx : bodyHeight, attempt + 1);
+          } else {
+            if (overflow && railGutter > 0) {
+              const verifyScrollable = (available, tries = 0) => {
+                const full = flow(available, Infinity).text;
+                if (!full || tries > 12) return;
+                getTextRenderInfo({
+                  text: full, font: bodyMesh.font, unicodeFontsURL: bodyMesh.unicodeFontsURL,
+                  fontSize: fontWorld, lineHeight, anchorX: "left", anchorY: "top", whiteSpace: "nowrap",
+                  sdfGlyphSize: bodyMesh.sdfGlyphSize, sdfExponent: bodyMesh.sdfExponent,
+                }, ({ visibleBounds }) => {
+                  if (bodyMesh.userData.graphBodyFlow !== layout || !bodyMesh.parent) return;
+                  const [, glyphBottom, glyphRight] = visibleBounds;
+                  const innerWidth = textWidthWorld - railGutter;
+                  if (glyphRight > innerWidth) {
+                    verifyScrollable(available * Math.min(0.94, innerWidth / glyphRight), tries + 1);
+                    return;
+                  }
+                  Object.assign(layout, { text: full, overflow: true, scrollMax: Math.max(0, -glyphBottom - textHeightWorld), textWidth: innerWidth });
+                  bodyMesh.text = full;
+                  bodyMesh.sync();
+                  setBodyScroll(record, width, bodyTop, bodyBottom, innerWidth, layout.scrollMax);
+                  if (record.bodyScroll) record.bodyScroll.prose = prose;
+                });
+              };
+              verifyScrollable((textWidthWorld - railGutter) / fontWorld * bodyFontSizePx);
+              return;
+            }
+            layout.text = candidate;
+            layout.overflow = overflow;
+            bodyMesh.text = candidate;
+            bodyMesh.sync();
+            if (record.bodyScroll) setBodyScroll(record, width, bodyTop, bodyBottom, textWidthWorld, 0);
+          }
+        });
+      };
+      if (nativeBody) verify(initialWidth, bodyBottom - bodyTop);
+    }
+    if (bodyMesh) {
+      bodyMesh.whiteSpace = "nowrap";
+      bodyMesh.clipRect = [0, -textHeightWorld, textWidthWorld, 0];
+    }
     setNodeTextMesh(record, record.textMeshes.bodyText, {
-      text: bodyLines.join("\n"),
+      text: bodyMesh?.userData.graphBodyFlow?.text ?? "",
       xPx: 36,
-      yPx: bodyTopPx,
+      yPx: bodyTop,
       z: 0.026,
       fontSizePx: bodyFontSizePx,
       lineGapPx: bodyLineGapPx,
       maxWidthPx: width - 72,
-      color: 0x9ec1dd,
+      color: appearance?.bodyText ?? 0x9ec1dd,
       textAlign: "left",
       anchorX: "left",
       anchorY: "top",
     });
-  } else if (shape === "card" && subtitle) {
-    ctx.font = bodyFont;
-    const subtitleLines = wrapTextLines(ctx, subtitle.toUpperCase(), width - 72, 2);
-    const bodyTopPx = headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55));
-    setNodeTextMesh(record, record.textMeshes.bodyText, {
-      text: subtitleLines.join("\n"),
-      xPx: 36,
-      yPx: bodyTopPx,
-      z: 0.026,
-      fontSizePx: bodyFontSizePx,
-      lineGapPx: bodyLineGapPx,
-      maxWidthPx: width - 72,
-      color: 0x9ec1dd,
-      textAlign: "left",
-      anchorX: "left",
-      anchorY: "top",
-    });
+    if (nativeBody) bodyMesh.visible = true;
+    const activeFlow = bodyMesh?.userData.graphBodyFlow;
+    if (record.bodyScroll) setBodyScroll(record, width, bodyTop, bodyBottom,
+      activeFlow?.textWidth ?? textWidthWorld, activeFlow?.scrollMax ?? 0);
+  } else if (record.textMeshes.bodyText) {
+    delete record.textMeshes.bodyText.userData.graphBodyFlow;
+    if (record.bodyScroll) setBodyScroll(record, width, bodyTop, bodyBottom, 0, 0);
   }
 
   if (shape === "card" && bodyStrip) {
@@ -2283,7 +2769,7 @@ function updateCardTexture({
       yPx: stripTextY,
       z: 0.03,
       fontSizePx: stripFontSizePx,
-      color: 0xd6e4ef,
+      color: appearance?.bodyText ?? 0xd6e4ef,
       fontWeight: "bold",
       textAlign: "left",
       anchorX: "left",
@@ -2295,7 +2781,7 @@ function updateCardTexture({
       yPx: stripTextY,
       z: 0.03,
       fontSizePx: stripFontSizePx,
-      color: 0xd6e4ef,
+      color: appearance?.bodyText ?? 0xd6e4ef,
       fontWeight: "bold",
       textAlign: "right",
       anchorX: "right",
@@ -2308,6 +2794,25 @@ function updateCardTexture({
     ctx.fillRect(36, stripY, stripWidth * bodyStrip.value, stripBarHeightPx);
   }
 
+  if (appearance) paintThemedCardBorder(record, record.cardStrokeColor ?? appearance.border);
+  texture.needsUpdate = true;
+}
+
+function worldCardOutlineWidthPx(canvas) {
+  return Math.max(7, Math.min(13, canvas.height * 0.013));
+}
+
+function paintThemedCardBorder(record, color) {
+  const { canvas, texture } = record;
+  const ctx = canvas.getContext("2d");
+  const thickness = worldCardOutlineWidthPx(canvas);
+  const inset = 1.5 + thickness * 0.5;
+  ctx.strokeStyle = toCssColor(color);
+  ctx.lineWidth = thickness;
+  ctx.beginPath();
+  ctx.roundRect(inset, inset, canvas.width - 2 * inset, canvas.height - 2 * inset, Math.max(0, 36 - inset));
+  ctx.stroke();
+  record.cardStrokeColor = color;
   texture.needsUpdate = true;
 }
 
@@ -2467,6 +2972,8 @@ function createEdgeLabelSprite({
   fontSizePx = DEFAULT_EDGE_LABEL_FONT_SIZE_PX,
   worldHeight = DEFAULT_EDGE_LABEL_WORLD_HEIGHT,
   minWorldWidth = DEFAULT_EDGE_LABEL_MIN_WORLD_WIDTH,
+  appearance = null,
+  editTarget = null,
 }) {
   const resolvedText = String(text ?? "").trim().slice(0, 64);
   const resolvedFontSizePx = Math.max(24, Number(fontSizePx) || DEFAULT_EDGE_LABEL_FONT_SIZE_PX);
@@ -2479,7 +2986,7 @@ function createEdgeLabelSprite({
     resolvedMinWorldWidth,
     Math.min(4.2, spriteHeight * widthRatio * 0.4),
   );
-  return createBillboardTextLabel({
+  const label = createBillboardTextLabel({
     THREE,
     Text,
     text: resolvedText,
@@ -2496,10 +3003,66 @@ function createEdgeLabelSprite({
     depthWrite: false,
     renderOrder: 3,
     textRole: "edge-label",
+    editTarget,
   });
+  if (appearance) applyEdgeLabelAppearance(THREE, label, appearance);
+  return label;
+}
+
+function applyEdgeLabelAppearance(THREE, label, appearance) {
+  const { textMesh, backgroundMesh } = label.userData;
+  if (!textMesh || !backgroundMesh) return;
+  if (!label.userData.hasCompactCaption) {
+    const width = Math.max(1.15, textMesh.maxWidth / 0.84 * 1.25);
+    const oldGeometry = backgroundMesh.geometry;
+    backgroundMesh.geometry = createRoundedCardGeometry({ THREE, width, height: 0.86, cornerRadius: 0.22 });
+    oldGeometry.dispose();
+    const outlineWidth = 0.045;
+    const outline = new THREE.Mesh(
+      createRoundedCardGeometry({ THREE, width: width + 2 * outlineWidth,
+        height: 0.86 + 2 * outlineWidth, cornerRadius: 0.22 + outlineWidth }),
+      new THREE.MeshBasicMaterial({ color: appearance.labelBorder,
+        transparent: true, depthTest: true, depthWrite: false }),
+    );
+    outline.name = "edge-caption-outline";
+    outline.position.z = -0.01;
+    outline.onBeforeRender = (...args) => backgroundMesh.onBeforeRender(...args);
+    outline.renderOrder = backgroundMesh.renderOrder - 0.005;
+    // Keep the visible border separate from the edge's existing hit target.
+    label.add(outline);
+    const setRenderOrder = label.setRenderOrder;
+    label.setRenderOrder = (order) => {
+      setRenderOrder(order);
+      outline.renderOrder = backgroundMesh.renderOrder - 0.005;
+    };
+    const dispose = label.dispose;
+    label.dispose = () => {
+      outline.geometry.dispose();
+      outline.material.dispose();
+      dispose();
+    };
+    label.userData.captionOutline = outline;
+    textMesh.maxWidth = width * 0.9;
+    textMesh.fontSize *= 1.31;
+    label.userData.hasCompactCaption = true;
+  }
+  textMesh.color = appearance.labelText;
+  textMesh.outlineWidth = textMesh.fontSize * 0.025;
+  textMesh.outlineColor = appearance.labelText;
+  textMesh.outlineOpacity = 1;
+  textMesh.sync?.();
+  label.userData.captionOutline.material.color.setHex(appearance.labelBorder);
+  backgroundMesh.material.color.setHex(appearance.labelFill);
+  // The caption and edge render in the same ordered blended pass. An opaque
+  // fill here fully covers the routed stroke without changing world depth.
+  backgroundMesh.material.opacity = 1;
 }
 
 function disposeNodeRecord(record) {
+  for (const rail of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
+    rail?.geometry.dispose();
+    rail?.material.dispose();
+  }
   for (const textMesh of Object.values(record.textMeshes ?? {})) {
     disposeGraphTroikaText(textMesh);
   }
@@ -2714,6 +3277,114 @@ function resolveEdgeVisualStyle(edge) {
   return "arrow";
 }
 
+// Trace the outer edges of the actual hit geometry. Using local graph units
+// preserves perceptual weight on both axes of stretched ellipses and on diagonals.
+function compactOutlinePath(geometry) {
+  const position = geometry.getAttribute("position");
+  const triangles = geometry.index?.array ?? Array.from({ length: position.count }, (_, i) => i);
+  const points = new Map();
+  const edges = new Map();
+  const pointKey = (index) => {
+    const x = position.getX(index);
+    const y = position.getY(index);
+    const key = `${Math.round(x * 1e6)}:${Math.round(y * 1e6)}`;
+    if (!points.has(key)) points.set(key, [x, y]);
+    return key;
+  };
+  for (let i = 0; i + 2 < triangles.length; i += 3) {
+    const keys = [pointKey(triangles[i]), pointKey(triangles[i + 1]), pointKey(triangles[i + 2])];
+    if (new Set(keys).size !== 3) continue;
+    for (let j = 0; j < 3; j += 1) {
+      const from = keys[j];
+      const to = keys[(j + 1) % 3];
+      const edge = from < to ? `${from}/${to}` : `${to}/${from}`;
+      if (edges.has(edge)) edges.delete(edge);
+      else edges.set(edge, [from, to]);
+    }
+  }
+  const next = new Map(edges.values());
+  const path = new Path2D();
+  while (next.size) {
+    const start = next.keys().next().value;
+    path.moveTo(...points.get(start));
+    let from = start;
+    while (next.has(from)) {
+      const to = next.get(from);
+      next.delete(from);
+      path.lineTo(...points.get(to));
+      from = to;
+    }
+    path.closePath();
+  }
+  return path;
+}
+
+function paintThemedCompactNode(record, accent, decorativeColor, color) {
+  const { canvas, texture, cardMesh, shape } = record;
+  if (record.compactOutline?.accent === accent && record.compactOutline.color === color
+    && record.compactOutline.decorativeColor === decorativeColor) return;
+  record.compactOutline = { accent, color, decorativeColor };
+
+  const { width, height } = canvas;
+  const ctx = canvas.getContext("2d");
+  const fill = toCssColor(accent);
+  if (shouldUseDecoratedShapeTexture(shape)) {
+    drawShapeNodeTexture({ ctx, width, height, shape, fill, border: toCssColor(decorativeColor),
+      drawTitle: false, drawOuterBorder: false });
+  } else {
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, width, height);
+  }
+  const geometry = cardMesh.geometry;
+  geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox;
+  const scaleX = width / (max.x - min.x);
+  const scaleY = height / (max.y - min.y);
+  const worldCardHeight = record.shapeHalfHeight * 2 / NODE_SHAPE_METRICS[shape].heightScale;
+  const thickness = worldCardOutlineWidthPx(canvas) * worldCardHeight / height;
+  ctx.save();
+  ctx.setTransform(scaleX, 0, 0, -scaleY, -min.x * scaleX, max.y * scaleY);
+  ctx.lineWidth = 2 * thickness; // The exact face clips the other half.
+  ctx.lineJoin = "miter";
+  ctx.strokeStyle = toCssColor(color);
+  record.compactOutlinePath ??= compactOutlinePath(geometry);
+  ctx.stroke(record.compactOutlinePath);
+  ctx.restore();
+  cardMesh.material.map = texture;
+  cardMesh.material.color.setHex(0xffffff);
+  texture.needsUpdate = true;
+}
+
+function paintDiamondBorder(record, accent, border, state = "normal") {
+  const { appearance, canvas, cardMesh, texture } = record;
+  const selected = state === "selected";
+  const hovered = state === "hover";
+  const requested = selected ? appearance?.selected ?? DEFAULT_CARD_HIGHLIGHT_COLOR
+    : hovered ? appearance?.hover ?? DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR : appearance?.border ?? border;
+  const direction = graphContrastRatio(0, accent) >= graphContrastRatio(0xffffff, accent) ? "darker" : "lighter";
+  const stroke = graphContrastColor(requested, accent, selected ? 5 : hovered ? 4 : 3.2, 1, direction);
+  const key = `${accent}:${stroke}:${state}`;
+  if (record.diamondBorderKey === key) return;
+  record.diamondBorderKey = key;
+
+  const { width, height } = canvas;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = toCssColor(accent);
+  ctx.fillRect(0, 0, width, height);
+  ctx.save();
+  // UVs cover the exact diamond; the geometry clips the outside half of
+  // this stroke, so even the selected state retains the original silhouette.
+  ctx.lineJoin = "miter";
+  ctx.lineWidth = Math.min(width, height) * (selected ? 0.096 : hovered ? 0.068 : 0.056);
+  ctx.strokeStyle = toCssColor(stroke);
+  traceShapeTexturePath(ctx, "diamond", width, height, 0);
+  ctx.stroke();
+  ctx.restore();
+  cardMesh.material.map = texture;
+  cardMesh.material.color.setHex(0xffffff);
+  texture.needsUpdate = true;
+}
+
 function drawShapeNodeTexture({
   ctx,
   width,
@@ -2725,6 +3396,7 @@ function drawShapeNodeTexture({
   textColor,
   textOutline,
   drawTitle = true,
+  drawOuterBorder = true,
 }) {
   const resolvedShape = normalizeNodeShape(shape);
   ctx.fillStyle = fill;
@@ -2733,8 +3405,15 @@ function drawShapeNodeTexture({
   ctx.save();
   ctx.lineWidth = 8;
   ctx.strokeStyle = border;
-  traceShapeTexturePath(ctx, resolvedShape, width, height, 0);
-  ctx.stroke();
+  if (drawOuterBorder) {
+    traceShapeTexturePath(ctx, resolvedShape, width, height, 0);
+    ctx.stroke();
+  } else if (resolvedShape === "cylinder") {
+    const { centerX, topCenterY, halfWidth, capRadiusY } = resolveCylinderProfile(width, height);
+    ctx.beginPath();
+    ctx.ellipse(centerX, topCenterY, halfWidth, capRadiusY, 0, 0, Math.PI);
+    ctx.stroke();
+  }
 
   if (resolvedShape === "subroutine") {
     const insetX = width * 0.14;

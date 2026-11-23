@@ -78,3 +78,35 @@ exports and option documentation rather than inventing APIs. Reuse shared
 runtime and graph primitives, keep application policy in the application,
 and report the checks you actually ran. Public hosted URLs may track a moving
 release; use a tagged package for reproducible applications.
+
+## Light and dark graph appearance
+
+Pass `hud: { theme: "light" }` or `hud: { theme: "dark" }` when creating a
+graph context. Switch an existing scene with `ctx.setPanelTheme("dark")`;
+`ctx.panelTheme` returns the mode and `ctx.onPanelThemeChange(callback)`
+returns an unsubscribe function. Existing panel geometry and content state
+are retained. Native modes own the scene background and enabled fog color,
+even if the host supplied a fixed legacy color. They preserve disabled fog,
+fog distances, and explicit universal-network label colors. Without a native
+mode, custom and legacy themes keep their configured background and fog.
+Window color overrides and textured skins are preserved. Use
+`panelTheme: false` in a window's options to opt it out entirely. Light mode uses pale panels with dark, contrast-adjusted text on Halo builds
+that expose window appearance tokens; older Halo builds retain a readable
+slate fallback for panel bodies. Existing custom and legacy theme selections are unchanged
+unless the host explicitly switches to a native mode.
+
+Use `resolveGraphPanelTheme({ storageKey })` for initial preference resolution
+and `installGraphPanelThemeControl(ctx, { storageKey })` for the optional
+native Appearance panel. Without an explicit host mode, the control restores
+the saved choice or follows system light/dark preference until the user
+chooses a mode. Call the control's `dispose()` when removing it.
+
+### Scroll saved card text
+
+For cards with authored text, opt in with `createCardGraphScene({ enableSavedBodyScroll: true, ... })`.
+Overflowing bodies render an in-scene track and thumb with the full text clipped
+to the body; short bodies have no scrollbar. After hitting the frontmost card,
+a host can request `getBodyScrollTarget(nodeId)` to obtain its card-local rail
+bounds, scroll position and thumb fraction. Route wheel scrolling through
+`scrollBy` (fractions of one body height) or rail dragging through `scrollTo`
+(0 to 1). Selection, graph positions, and the underlying text are unchanged.

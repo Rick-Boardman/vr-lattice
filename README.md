@@ -107,3 +107,50 @@ Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 - [Third-party components and asset provenance](THIRD_PARTY.md)
 - [Public release audit](docs/release-audit.md)
 - [LICENSE](LICENSE) and [NOTICE](NOTICE)
+
+
+### Desktop editing of authored graph text
+
+Opt in at the host's existing graph/DOM input boundary. The graph scene provides
+`editHitTargets` and, with `enableSavedBodyScroll: true`, `getBodyScrollTarget`.
+Initialize the ordinary pick ray as usual, then call
+`pickGraphDesktopTextField(scene, raycaster, preferredHit)` for authored
+`title`, `body`, or `label` surfaces. Keep ports and HUD controls ahead of
+graph editing in the host's hit arbitration. Return no edit target for derived
+captions, forecast projections, or documents the current person cannot edit.
+
+Create one `createInlineSceneEditor({ host: canvas, project, getMode, onCommit })`
+per mounted graph. Enrich the resolved target with a host-specific unique `key`,
+current document identity in `document`, and (for Notes) `multiline: true`.
+Use `createSceneEditGesture()` to qualify the browser's double-click against the
+same two stationary primary clicks; optionally defer normal single-click
+inspector reveal with `deferInspect`. A normal selection should reveal the
+Inspector **without activating a text field**. A desktop double-click can
+arrive after that reveal; keep the Inspector away from the selected pointer
+location and preserve that position through the second press. Still block
+inline authoring during an intentional Inspector text edit or modal. For
+products whose graphs overlap, honor the ordinary topmost hit rather than
+editing an obscured card.
+
+Call `editor.open(target, currentText)`,
+`editor.update()` on frames, and `editor.dispose()` on unmount. Hosts validate
+permissions and document identity again in `onCommit` and run their existing
+domain mutation, undo and persistence path; Lattice never writes a document.
+
+For saved Notes, call `pickGraphSavedBodyScroll({ scene, raycaster, winner, project })`
+with the same ordinary node ray, and supply it to `attachGraphSavedBodyInput`
+before wiring the board's desktop handlers. The returned teardown must be called
+on unmount. Provide `isBlocked` so HUD, placement and XR gestures keep ownership.
+No-drag clicks outside the author's active overlay still reach the host after
+saving. Escape cancels; multiline Notes stay native, with Enter for a newline and
+Ctrl/Command+Enter or click-away to save. A restrictive CSP host can supply
+`styleNonce` to the editor (on the first use per document).
+
+Reusable graph hosts can call `createGraphAuthoringAdapter` to map hit fields
+to host names and centralize canonical entity lookup, document identity checks,
+editor lifecycle, and saved-body picking. Provide `resolveField`, a canonical
+`resolveEdge`, host `allowWrite`/mode checks, and `writeField` for the existing
+mutation command. Use `createPassiveGraphInspector` with the same gesture and
+current-selection checks. `resolveGraphInspectorFrame` shares physical docking;
+choose explicitly whether the anchor itself should be avoided if no pointer
+coordinate is provided. Spherical anchors remain unclamped horizontally.

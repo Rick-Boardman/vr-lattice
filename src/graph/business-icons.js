@@ -6,8 +6,8 @@
  */
 const ICON_CANVAS_PX = 96;
 const ICON_GRID = 24;
-const ICON_STROKE_WIDTH = 1.75;
-const ICON_COLOR = "#dbe5ef";
+const ICON_STROKE_WIDTH = 2.15;
+const ICON_COLOR = "#f4f8fc";
 
 const circle = (x, y, r) => `M${x - r} ${y}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`;
 const box = (x, y, size) => `M${x + 1.5} ${y}h${size - 3}a1.5 1.5 0 0 1 1.5 1.5v${size - 3}a1.5 1.5 0 0 1-1.5 1.5h${-(size - 3)}a1.5 1.5 0 0 1-1.5-1.5v${-(size - 3)}a1.5 1.5 0 0 1 1.5-1.5z`;
