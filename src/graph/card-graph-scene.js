@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { findGraphSceneAppearance } from "./scene-appearance.js";
 import { setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
+import { layoutCardBodyText } from "./card-body-layout.js";
 import { GRAPH_CAPTION_PALETTE, graphContrastColor } from "./appearance-contrast.js";
 import { graphPanelTheme } from "./panel-theme.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
@@ -134,9 +135,9 @@ const DEFAULT_CARD_BODY_STRIP_BOTTOM_PADDING_PX = 54;
 const DEFAULT_CARD_HIGHLIGHT_COLOR = 0x78deff;
 const DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR = 0xe8f7ff;
 const CARD_APPEARANCE = {
-  light: { world: graphPanelTheme("light").background, body: 0xf8fafc, inactive: 0xe9eef4, bodyText: 0x30465f, border: 0xb3c1d0,
+  light: { world: graphPanelTheme("light").background, body: 0xf8fafc, inactive: 0xe9eef4, bodyText: 0x30465f, border: 0x73889e,
     rule: "#d5dfe9", selected: 0x305477, hover: 0x537ea3, ...GRAPH_CAPTION_PALETTE.light },
-  dark: { world: graphPanelTheme("dark").background, body: 0x192636, inactive: 0x15202d, bodyText: 0xd4dfeb, border: 0x506780,
+  dark: { world: graphPanelTheme("dark").background, body: 0x192636, inactive: 0x15202d, bodyText: 0xd4dfeb, border: 0x748aa4,
     rule: "#3c5066", selected: 0x96b9d9, hover: 0x718da8, ...GRAPH_CAPTION_PALETTE.dark },
 };
 const GRAPH_NODE_TITLE_FONT_FAMILY = "monospace";
@@ -1058,6 +1059,13 @@ export function createCardGraphScene({
       const baseBorder = asHexColor(getNodeBorderColor(record.node), baseAccent);
       applyNodeDepthPriority(record, isSelected);
       if (record.shape === "card") {
+        if (appearance) {
+          record.shadowMesh.visible = false;
+          const borderColor = isSelected ? appearance.selected : isHovered ? appearance.hover : appearance.border;
+          if (record.cardStrokeColor !== borderColor) paintThemedCardBorder(record, borderColor);
+          record.cardMesh.scale.setScalar(1);
+          continue;
+        }
         if (record.shadowMesh?.material?.color?.setHex) {
           if (isSelected) {
             nodeHighlightColor.setHex(appearance?.selected ?? DEFAULT_CARD_HIGHLIGHT_COLOR);
@@ -1309,6 +1317,7 @@ export function createCardGraphScene({
     appearance = next;
     for (const record of nodeRecords.values()) {
       record.appearance = next;
+      record.cardStrokeColor = null;
       if (record.texture.colorSpace !== THREE.SRGBColorSpace) record.texture.colorSpace = THREE.SRGBColorSpace;
       redrawNode(record);
     }
@@ -2284,7 +2293,6 @@ function updateCardTexture({
   drawRoundedRect(ctx, 0, 0, width, height, radius, toCssColor(body));
   if (!appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);
   drawRoundedRect(ctx, 0, 0, width, headerHeight, [radius, radius, 0, 0], toCssColor(accent));
-  if (appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(appearance.border), 7);
 
   ctx.fillStyle = appearance?.rule ?? "rgba(255,255,255,0.08)";
   ctx.fillRect(0, headerHeight, width, appearance ? 4 : 6);
@@ -2333,31 +2341,25 @@ function updateCardTexture({
     }
   }
 
-  if (shape === "card" && bodyText) {
+  const prose = bodyText || subtitle.toUpperCase();
+  if (prose) {
     ctx.font = bodyFont;
-    const bodyLines = wrapTextLines(ctx, bodyText, width - 72, bodyStrip ? 3 : 4);
-    const bodyTopPx = headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55));
+    const bodyLines = layoutCardBodyText(prose, {
+      width: width - 72, height: bodyBottom - bodyTop, fontHeight: bodyFontSizePx,
+      lineGap: bodyLineGapPx, measure: text => ctx.measureText(text).width,
+    });
+    const bodyMesh = record.textMeshes.bodyText;
+    if (bodyMesh) {
+      // The body has already been wrapped into explicit lines. Avoid a second
+      // soft wrap that moves isolated words and can run text into the metric strip.
+      bodyMesh.whiteSpace = "nowrap";
+      bodyMesh.clipRect = [0, -pxToCardWorldSize(record, bodyBottom - bodyTop),
+        pxToCardLocalX(record, width - 36) - pxToCardLocalX(record, 36), 0];
+    }
     setNodeTextMesh(record, record.textMeshes.bodyText, {
       text: bodyLines.join("\n"),
       xPx: 36,
-      yPx: bodyTopPx,
-      z: 0.026,
-      fontSizePx: bodyFontSizePx,
-      lineGapPx: bodyLineGapPx,
-      maxWidthPx: width - 72,
-      color: appearance?.bodyText ?? 0x9ec1dd,
-      textAlign: "left",
-      anchorX: "left",
-      anchorY: "top",
-    });
-  } else if (shape === "card" && subtitle) {
-    ctx.font = bodyFont;
-    const subtitleLines = wrapTextLines(ctx, subtitle.toUpperCase(), width - 72, 2);
-    const bodyTopPx = headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55));
-    setNodeTextMesh(record, record.textMeshes.bodyText, {
-      text: subtitleLines.join("\n"),
-      xPx: 36,
-      yPx: bodyTopPx,
+      yPx: bodyTop,
       z: 0.026,
       fontSizePx: bodyFontSizePx,
       lineGapPx: bodyLineGapPx,
@@ -2404,6 +2406,21 @@ function updateCardTexture({
     ctx.fillRect(36, stripY, stripWidth * bodyStrip.value, stripBarHeightPx);
   }
 
+  if (appearance) paintThemedCardBorder(record, record.cardStrokeColor ?? appearance.border);
+  texture.needsUpdate = true;
+}
+
+function paintThemedCardBorder(record, color) {
+  const { canvas, texture } = record;
+  const ctx = canvas.getContext("2d");
+  const thickness = Math.max(7, Math.min(13, canvas.height * 0.013));
+  const inset = 1.5 + thickness * 0.5;
+  ctx.strokeStyle = toCssColor(color);
+  ctx.lineWidth = thickness;
+  ctx.beginPath();
+  ctx.roundRect(inset, inset, canvas.width - 2 * inset, canvas.height - 2 * inset, Math.max(0, 36 - inset));
+  ctx.stroke();
+  record.cardStrokeColor = color;
   texture.needsUpdate = true;
 }
 
