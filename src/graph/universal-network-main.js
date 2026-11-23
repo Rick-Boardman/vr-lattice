@@ -882,7 +882,7 @@ export async function runUniversalNetworkScene(config) {
   function renderNetworkViewPanel() {
     if (!viewOpen || !networkModel) return;
     const action = (text, label, onClick) => ({
-      text, actionButtonText: label, actionButtonWidthPx: 82, actionButtonOnClick: onClick,
+      text, actionButtonText: label, actionButtonWidthPx: 108, actionButtonOnClick: onClick,
     });
     const title = selectedGroup ?? (selectedNodeId ? pickTextFromFields(nodeById.get(selectedNodeId)?.userData.node, ["name", "label", "id"]) : null);
     const rows = [
