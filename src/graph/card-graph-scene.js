@@ -2,6 +2,7 @@
 import { findGraphSceneAppearance } from "./scene-appearance.js";
 import { setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
 import { layoutCardBodyText } from "./card-body-layout.js";
+import { getTextRenderInfo, Text as TroikaText } from "troika-three-text";
 import { GRAPH_CAPTION_PALETTE, graphContrastColor } from "./appearance-contrast.js";
 import { graphPanelTheme } from "./panel-theme.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
@@ -2344,20 +2345,62 @@ function updateCardTexture({
   const prose = bodyText || subtitle.toUpperCase();
   if (prose) {
     ctx.font = bodyFont;
-    const bodyLines = layoutCardBodyText(prose, {
-      width: width - 72, height: bodyBottom - bodyTop, fontHeight: bodyFontSizePx,
-      lineGap: bodyLineGapPx, measure: text => ctx.measureText(text).width,
-    });
     const bodyMesh = record.textMeshes.bodyText;
+    const textWidthWorld = pxToCardLocalX(record, width - 36) - pxToCardLocalX(record, 36);
+    const textHeightWorld = pxToCardWorldSize(record, bodyBottom - bodyTop);
+    const fontWorld = pxToCardWorldSize(record, bodyFontSizePx);
+    const lineHeight = bodyLineGapPx / bodyFontSizePx;
+    // CSS canvas units are only a fast first estimate. Neither the canvas font
+    // nor its x/y aspect is necessarily the one used by the Troika renderer.
+    const initialWidth = textWidthWorld / fontWorld * bodyFontSizePx;
+    const flow = (maxWidth, bodyHeight = bodyBottom - bodyTop) => {
+      ctx.save();
+      ctx.font = bodyFont;
+      try {
+        return layoutCardBodyText(prose, {
+          width: maxWidth, height: bodyHeight, fontHeight: bodyFontSizePx,
+          lineGap: bodyLineGapPx, measure: text => ctx.measureText(text).width,
+        }).join("\n");
+      } finally {
+        ctx.restore();
+      }
+    };
+    const nativeBody = bodyMesh instanceof TroikaText;
+    const key = JSON.stringify([prose, bodyFont, bodyMesh?.font, bodyMesh?.unicodeFontsURL,
+      fontWorld, lineHeight, initialWidth, textHeightWorld]);
+    if (bodyMesh && bodyMesh.userData.graphBodyFlow?.key !== key) {
+      const layout = { key, text: nativeBody ? "" : flow(initialWidth) };
+      bodyMesh.userData.graphBodyFlow = layout;
+      // Validate the actual glyph paths, including fallback fonts and final-line
+      // ellipsis, before ever displaying them. Reuse this result on mere repaints.
+      const verify = (maxWidth, bodyHeight, attempt = 0) => {
+        const candidate = flow(maxWidth, bodyHeight);
+        if (!candidate || attempt > 12) return;
+        getTextRenderInfo({
+          text: candidate, font: bodyMesh.font, unicodeFontsURL: bodyMesh.unicodeFontsURL,
+          fontSize: fontWorld, lineHeight, anchorX: "left", anchorY: "top", whiteSpace: "nowrap",
+          sdfGlyphSize: bodyMesh.sdfGlyphSize, sdfExponent: bodyMesh.sdfExponent,
+        }, ({ visibleBounds }) => {
+          if (bodyMesh.userData.graphBodyFlow !== layout || !bodyMesh.parent) return;
+          const [, bottom, right] = visibleBounds;
+          if (right > textWidthWorld || bottom < -textHeightWorld) {
+            verify(right > textWidthWorld ? maxWidth * Math.min(0.94, textWidthWorld / right) : maxWidth,
+              bottom < -textHeightWorld ? bodyHeight - bodyLineGapPx : bodyHeight, attempt + 1);
+          } else {
+            layout.text = candidate;
+            bodyMesh.text = candidate;
+            bodyMesh.sync();
+          }
+        });
+      };
+      if (nativeBody) verify(initialWidth, bodyBottom - bodyTop);
+    }
     if (bodyMesh) {
-      // The body has already been wrapped into explicit lines. Avoid a second
-      // soft wrap that moves isolated words and can run text into the metric strip.
       bodyMesh.whiteSpace = "nowrap";
-      bodyMesh.clipRect = [0, -pxToCardWorldSize(record, bodyBottom - bodyTop),
-        pxToCardLocalX(record, width - 36) - pxToCardLocalX(record, 36), 0];
+      bodyMesh.clipRect = [0, -textHeightWorld, textWidthWorld, 0];
     }
     setNodeTextMesh(record, record.textMeshes.bodyText, {
-      text: bodyLines.join("\n"),
+      text: bodyMesh?.userData.graphBodyFlow?.text ?? "",
       xPx: 36,
       yPx: bodyTop,
       z: 0.026,
@@ -2369,6 +2412,9 @@ function updateCardTexture({
       anchorX: "left",
       anchorY: "top",
     });
+    if (nativeBody) bodyMesh.visible = true;
+  } else if (record.textMeshes.bodyText) {
+    delete record.textMeshes.bodyText.userData.graphBodyFlow;
   }
 
   if (shape === "card" && bodyStrip) {
