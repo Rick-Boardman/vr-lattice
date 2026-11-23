@@ -7,6 +7,7 @@ import { DEFAULT_SCENE_RIG_PITCH_CLAMP_EPSILON_RAD } from "@rb/halo/src/rig.js";
 import { clamp } from "@rb/halo/src/scalar-math.js";
 
 import { graphPanelTheme, installGraphPanelTheme } from "./panel-theme.js";
+import { bindGraphSceneAppearance } from "./scene-appearance.js";
 import { configureXrSafeRenderer, wireDesktopResize } from "./boot.js";
 import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWindows } from "./hud-layout.js";
 
@@ -300,6 +301,10 @@ export function createGraphSceneContext({
   if (applyStandardLayout) applyStandardGraphHudLayout(hudSystem);
 
   const unwireResize = wireDesktopResize({ renderer, camera: cameraObj, hudSystem });
+  const unbindAppearance = bindGraphSceneAppearance(sceneObj, () => panelTheme?.mode ?? null, (listener) => {
+    pendingThemeListeners.add(listener);
+    return () => pendingThemeListeners.delete(listener);
+  });
 
   return {
     THREE,
@@ -335,6 +340,7 @@ export function createGraphSceneContext({
     dispose: () => {
       try {
         unwireResize?.();
+        unbindAppearance();
         panelTheme?.dispose();
         pendingThemeListeners.clear();
       } catch {

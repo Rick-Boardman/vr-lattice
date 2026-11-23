@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { findGraphSceneAppearance } from "./scene-appearance.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
 import {
   applyGraphTroikaRenderSettings,
@@ -129,6 +130,12 @@ const DEFAULT_CARD_BODY_STRIP_BAR_HEIGHT_PX = 16;
 const DEFAULT_CARD_BODY_STRIP_BOTTOM_PADDING_PX = 54;
 const DEFAULT_CARD_HIGHLIGHT_COLOR = 0x78deff;
 const DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR = 0xe8f7ff;
+const CARD_APPEARANCE = {
+  light: { body: 0xf8fafc, inactive: 0xe9eef4, bodyText: 0x30465f, border: 0xb3c1d0,
+    rule: "#d5dfe9", selected: 0x305477, hover: 0x537ea3, labelText: 0x2c4058, labelFill: 0xf8fafc },
+  dark: { body: 0x192636, inactive: 0x15202d, bodyText: 0xd4dfeb, border: 0x506780,
+    rule: "#3c5066", selected: 0x96b9d9, hover: 0x718da8, labelText: 0xe1ebf5, labelFill: 0x223145 },
+};
 const GRAPH_NODE_TITLE_FONT_FAMILY = "monospace";
 const GRAPH_NODE_TITLE_FONT = buildGraphNodeTitleFont(DEFAULT_CARD_TITLE_FONT_SIZE_PX);
 const GRAPH_NODE_SHAPE_TITLE_FONT = buildGraphNodeTitleFont(116);
@@ -322,6 +329,7 @@ export function projectPlanarGraphPositionsToSphere({
  * @param {(edge: object) => number} [options.getActionEdgeOpacity] Action-edge opacity accessor.
  * @param {(edge: object) => number} [options.getDataWireOpacity] Data-wire opacity accessor.
  * @param {(edge: object) => string | null} [options.getEdgeLabel] Edge-label accessor.
+ * @param {"light" | "dark" | null} [options.appearanceMode] Explicit card/caption mode. Omit to inherit the native owning scene's mode; pass null for legacy styling.
  * @param {(edge: object) => string} [options.getEdgeSelectionKey] Edge-selection key accessor used by setSelectedEdgeKey.
  * @param {CardGraphSceneSphereOptions} [options.sphere] Sphere-layout overrides.
  * @returns {{ root: any, graph: { nodes: Array<object>, edges: Array<object> }, nodeHitTargets: Array<any>, portHitTargets: Array<any>, edgeHitTargets: Array<any>, actionHandleHitTargets: Array<any>, getNodeIds: () => Array<string>, getNodeById: (nodeId: string) => object | null, getNodeMeshById: (nodeId: string) => any, setSelectedIds: (nextIds: Array<string> | Set<string> | null | undefined) => void, setSelectedEdgeKey: (nextKey: string | null | undefined) => void, setHoveredId: (nextId: string | null | undefined) => void, getFlatBounds: (targetBox?: any) => any, getNodeFlatPosition: (nodeId: string) => any, translateFlatPositions: (nodeIds: Array<string> | Set<string>, delta: any) => void, setLayoutMode: (nextMode: string) => void, getLayoutMode: () => string, syncNode: (nodeId: string | null | undefined) => void, update: (dt?: number) => void, dispose: () => void }} Shared graph-scene controller.
@@ -337,6 +345,7 @@ export function createCardGraphScene({
   camera = null,
   layoutMode = "flat",
   style = {},
+  appearanceMode,
   getNodeTitle = (node) => String(node?.name ?? node?.label ?? node?.id ?? "Node"),
   getNodeLeadingBadge = () => null,
   getNodeSubtitle = (node) => String(node?.connector ?? node?.type ?? node?.kind ?? ""),
@@ -373,6 +382,10 @@ export function createCardGraphScene({
   const root = new THREE.Group();
   root.name = "cardGraphScene";
   rootParent.add(root);
+  const appearanceSource = appearanceMode === undefined ? findGraphSceneAppearance(rootParent) : null;
+  const initialAppearanceMode = appearanceMode ?? appearanceSource?.getMode();
+  let appearance = initialAppearanceMode === "light" || initialAppearanceMode === "dark"
+    ? CARD_APPEARANCE[initialAppearanceMode] : null;
 
   const cardWidth = Number(style.cardWidth ?? DEFAULT_CARD_WIDTH);
   const cardHeight = Number(style.cardHeight ?? DEFAULT_CARD_HEIGHT);
@@ -507,6 +520,7 @@ export function createCardGraphScene({
       THREE,
       Text,
       node,
+      appearance,
       cardWidth,
       cardHeight,
       cardCanvasWidth,
@@ -629,6 +643,7 @@ export function createCardGraphScene({
         fontSizePx: edgeLabelFontSizePx,
         worldHeight: edgeLabelWorldHeight,
         minWorldWidth: edgeLabelMinWorldWidth,
+        appearance,
       })
       : null;
     if (labelSprite) {
@@ -1030,9 +1045,9 @@ export function createCardGraphScene({
       if (record.shape === "card") {
         if (record.shadowMesh?.material?.color?.setHex) {
           if (isSelected) {
-            nodeHighlightColor.setHex(DEFAULT_CARD_HIGHLIGHT_COLOR);
+            nodeHighlightColor.setHex(appearance?.selected ?? DEFAULT_CARD_HIGHLIGHT_COLOR);
           } else if (isHovered) {
-            nodeHighlightColor.setHex(DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR);
+            nodeHighlightColor.setHex(appearance?.hover ?? DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR);
           } else {
             nodeHighlightColor.setHex(baseBorder);
             nodeHighlightColor.lerp(edgeSelectedColor, 0.16);
@@ -1040,8 +1055,8 @@ export function createCardGraphScene({
           record.shadowMesh.material.color.setHex(nodeHighlightColor.getHex());
         }
         record.shadowMesh.visible = isSelected || isHovered;
-        record.shadowMesh.material.opacity = isSelected ? 0.82 : isHovered ? 0.44 : 0.08;
-        record.shadowMesh.scale.setScalar(isSelected ? 1.035 : isHovered ? 1.018 : 1);
+        record.shadowMesh.material.opacity = isSelected ? (appearance ? 0.9 : 0.82) : isHovered ? 0.44 : 0.08;
+        record.shadowMesh.scale.setScalar(isSelected ? (appearance ? 1 : 1.035) : isHovered ? (appearance ? 0.993 : 1.018) : 1);
         record.cardMesh.scale.setScalar(1);
         continue;
       }
@@ -1246,6 +1261,16 @@ export function createCardGraphScene({
   function syncNode(nodeId) {
     const record = nodeRecords.get(String(nodeId ?? ""));
     if (!record) return;
+    redrawNode(record);
+    syncHighlights();
+    for (const edgeRecord of edgeRecords) {
+      if (edgeRecord.edge.fromId === record.node.id || edgeRecord.edge.toId === record.node.id) {
+        updateEdgePlacement(edgeRecord);
+      }
+    }
+  }
+
+  function redrawNode(record) {
     updateCardTexture({
       record,
       getNodeTitle,
@@ -1258,12 +1283,22 @@ export function createCardGraphScene({
       getNodeBodyColor,
       getNodeBorderColor,
     });
-    syncHighlights();
-    for (const edgeRecord of edgeRecords) {
-      if (edgeRecord.edge.fromId === record.node.id || edgeRecord.edge.toId === record.node.id) {
-        updateEdgePlacement(edgeRecord);
-      }
+  }
+
+  function setAppearanceMode(mode) {
+    if (mode !== "light" && mode !== "dark") return false;
+    const next = CARD_APPEARANCE[mode];
+    if (appearance === next) return true;
+    appearance = next;
+    for (const record of nodeRecords.values()) {
+      record.appearance = next;
+      redrawNode(record);
     }
+    for (const edge of edgeRecords) {
+      if (edge.labelSprite) applyEdgeLabelAppearance(THREE, edge.labelSprite, next);
+    }
+    syncHighlights();
+    return true;
   }
 
   function setSelectedIds(nextIds) {
@@ -1496,6 +1531,7 @@ export function createCardGraphScene({
   }
 
   update();
+  const unsubscribeAppearance = appearanceSource?.subscribe(({ key }) => setAppearanceMode(key));
 
   return {
     root,
@@ -1526,10 +1562,12 @@ export function createCardGraphScene({
       right: new THREE.Vector3().crossVectors(sphereOptions.up, sphereOptions.forward).normalize(),
     }),
     setLayoutMode,
+    setAppearanceMode,
     getLayoutMode: () => currentLayoutMode,
     syncNode,
     update,
     dispose() {
+      unsubscribeAppearance?.();
       rootParent.remove?.(root);
       arrowGeometry.dispose?.();
       edgePreview?.line.geometry?.dispose?.();
@@ -1555,6 +1593,7 @@ function createNodeRecord({
   THREE,
   Text,
   node,
+  appearance,
   cardWidth,
   cardHeight,
   cardCanvasWidth,
@@ -1684,6 +1723,7 @@ function createNodeRecord({
 
   const record = {
     node,
+    appearance,
     root,
     canvas,
     texture,
@@ -2064,7 +2104,9 @@ function updateCardTexture({
   const height = canvas.height;
   const accent = asHexColor(getNodeAccentColor(node), 0x5f8fc9);
   const border = asHexColor(getNodeBorderColor(node), accent);
-  const body = asHexColor(getNodeBodyColor(node), 0x172232);
+  const appearance = record.appearance;
+  const body = appearance ? (node.enabled === false ? appearance.inactive : appearance.body)
+    : asHexColor(getNodeBodyColor(node), 0x172232);
   const title = String(getNodeTitle(node) ?? node.id ?? "Node");
   const subtitle = String(getNodeSubtitle(node) ?? "").trim();
   const leadingBadge = String(getNodeLeadingBadge(node) ?? "").trim();
@@ -2081,7 +2123,8 @@ function updateCardTexture({
   const cardHeaderHeightPx = Number(record.cardHeaderHeightPx ?? DEFAULT_HEADER_HEIGHT_PX);
   const titleLineGapPx = Number(record.cardTitleLineGapPx ?? GRAPH_NODE_TITLE_LINE_GAP_PX);
   const badgeFont = record.cardBadgeFont ?? buildGraphNodeTitleFont(DEFAULT_CARD_BADGE_FONT_SIZE_PX);
-  const bodyFont = record.cardBodyFont ?? `${DEFAULT_CARD_BODY_FONT_SIZE_PX}px monospace`;
+  const bodyFont = appearance ? `${record.cardBodyFontSizePx}px sans-serif`
+    : (record.cardBodyFont ?? `${DEFAULT_CARD_BODY_FONT_SIZE_PX}px monospace`);
   const titleFontSizePx = Number(record.cardTitleFontSizePx ?? DEFAULT_CARD_TITLE_FONT_SIZE_PX);
   const badgeFontSizePx = Number(record.cardBadgeFontSizePx ?? DEFAULT_CARD_BADGE_FONT_SIZE_PX);
   const bodyFontSizePx = Number(record.cardBodyFontSizePx ?? DEFAULT_CARD_BODY_FONT_SIZE_PX);
@@ -2189,11 +2232,12 @@ function updateCardTexture({
   );
 
   drawRoundedRect(ctx, 0, 0, width, height, radius, toCssColor(body));
-  drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);
+  if (!appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(border), 10);
   drawRoundedRect(ctx, 0, 0, width, headerHeight, [radius, radius, 0, 0], toCssColor(accent));
+  if (appearance) drawRoundedStroke(ctx, 0, 0, width, height, radius, toCssColor(appearance.border), 7);
 
-  ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fillRect(0, headerHeight, width, 6);
+  ctx.fillStyle = appearance?.rule ?? "rgba(255,255,255,0.08)";
+  ctx.fillRect(0, headerHeight, width, appearance ? 4 : 6);
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
@@ -2249,7 +2293,7 @@ function updateCardTexture({
       fontSizePx: bodyFontSizePx,
       lineGapPx: bodyLineGapPx,
       maxWidthPx: width - 72,
-      color: 0x9ec1dd,
+      color: appearance?.bodyText ?? 0x9ec1dd,
       textAlign: "left",
       anchorX: "left",
       anchorY: "top",
@@ -2266,7 +2310,7 @@ function updateCardTexture({
       fontSizePx: bodyFontSizePx,
       lineGapPx: bodyLineGapPx,
       maxWidthPx: width - 72,
-      color: 0x9ec1dd,
+      color: appearance?.bodyText ?? 0x9ec1dd,
       textAlign: "left",
       anchorX: "left",
       anchorY: "top",
@@ -2283,7 +2327,7 @@ function updateCardTexture({
       yPx: stripTextY,
       z: 0.03,
       fontSizePx: stripFontSizePx,
-      color: 0xd6e4ef,
+      color: appearance?.bodyText ?? 0xd6e4ef,
       fontWeight: "bold",
       textAlign: "left",
       anchorX: "left",
@@ -2295,7 +2339,7 @@ function updateCardTexture({
       yPx: stripTextY,
       z: 0.03,
       fontSizePx: stripFontSizePx,
-      color: 0xd6e4ef,
+      color: appearance?.bodyText ?? 0xd6e4ef,
       fontWeight: "bold",
       textAlign: "right",
       anchorX: "right",
@@ -2467,6 +2511,7 @@ function createEdgeLabelSprite({
   fontSizePx = DEFAULT_EDGE_LABEL_FONT_SIZE_PX,
   worldHeight = DEFAULT_EDGE_LABEL_WORLD_HEIGHT,
   minWorldWidth = DEFAULT_EDGE_LABEL_MIN_WORLD_WIDTH,
+  appearance = null,
 }) {
   const resolvedText = String(text ?? "").trim().slice(0, 64);
   const resolvedFontSizePx = Math.max(24, Number(fontSizePx) || DEFAULT_EDGE_LABEL_FONT_SIZE_PX);
@@ -2479,7 +2524,7 @@ function createEdgeLabelSprite({
     resolvedMinWorldWidth,
     Math.min(4.2, spriteHeight * widthRatio * 0.4),
   );
-  return createBillboardTextLabel({
+  const label = createBillboardTextLabel({
     THREE,
     Text,
     text: resolvedText,
@@ -2497,6 +2542,26 @@ function createEdgeLabelSprite({
     renderOrder: 3,
     textRole: "edge-label",
   });
+  if (appearance) applyEdgeLabelAppearance(THREE, label, appearance);
+  return label;
+}
+
+function applyEdgeLabelAppearance(THREE, label, appearance) {
+  const { textMesh, backgroundMesh } = label.userData;
+  if (!textMesh || !backgroundMesh) return;
+  if (!label.userData.hasCompactCaption) {
+    const width = Math.max(1.15, textMesh.maxWidth / 0.84 * 0.92);
+    const oldGeometry = backgroundMesh.geometry;
+    backgroundMesh.geometry = createRoundedCardGeometry({ THREE, width, height: 0.74, cornerRadius: 0.22 });
+    oldGeometry.dispose();
+    textMesh.maxWidth = width * 0.9;
+    textMesh.fontSize *= 0.92;
+    label.userData.hasCompactCaption = true;
+  }
+  textMesh.color = appearance.labelText;
+  textMesh.sync?.();
+  backgroundMesh.material.color.setHex(appearance.labelFill);
+  backgroundMesh.material.opacity = 0.9;
 }
 
 function disposeNodeRecord(record) {
