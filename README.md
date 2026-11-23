@@ -145,3 +145,12 @@ No-drag clicks outside the author's active overlay still reach the host after
 saving. Escape cancels; multiline Notes stay native, with Enter for a newline and
 Ctrl/Command+Enter or click-away to save. A restrictive CSP host can supply
 `styleNonce` to the editor (on the first use per document).
+
+Reusable graph hosts can call `createGraphAuthoringAdapter` to map hit fields
+to host names and centralize canonical entity lookup, document identity checks,
+editor lifecycle, and saved-body picking. Provide `resolveField`, a canonical
+`resolveEdge`, host `allowWrite`/mode checks, and `writeField` for the existing
+mutation command. Use `createPassiveGraphInspector` with the same gesture and
+current-selection checks. `resolveGraphInspectorFrame` shares physical docking;
+choose explicitly whether the anchor itself should be avoided if no pointer
+coordinate is provided. Spherical anchors remain unclamped horizontally.

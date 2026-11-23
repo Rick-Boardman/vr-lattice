@@ -202,3 +202,4 @@ export { GRAPH_PANEL_THEMES, graphPanelTheme, installGraphPanelTheme } from "./p
 export { installGraphPanelThemeControl, resolveGraphPanelTheme } from "./panel-theme-control.js";
 
 export { createInlineSceneEditor, createSceneEditGesture, pickGraphDesktopTextField, pickGraphSavedBodyScroll, attachGraphSavedBodyInput } from "./desktop-scene-interaction.js";
+export { createGraphAuthoringAdapter, createPassiveGraphInspector, resolveGraphInspectorFrame } from "./authoring-adapter.js";
