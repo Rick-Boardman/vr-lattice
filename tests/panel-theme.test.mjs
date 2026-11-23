@@ -54,3 +54,22 @@ test("Lattice negotiates full light bodies only with compatible Halo and respect
   modernThemes.setTheme("dark");
   assert.equal(modern.tokens.text,0xe9f0f9);
 });
+
+test("native chrome separates active controls, track and thumb from adjacent surfaces", () => {
+  const luminance = rgb => {
+    const linear = x => (x /= 255) <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    return 0.2126 * linear((rgb >> 16) & 255) + 0.7152 * linear((rgb >> 8) & 255) + 0.0722 * linear(rgb & 255);
+  };
+  const ratio = (a,b) => {
+    const x = luminance(a), y = luminance(b);
+    return (Math.max(x,y) + 0.05) / (Math.min(x,y) + 0.05);
+  };
+  for (const theme of Object.values(GRAPH_PANEL_THEMES)) {
+    const t = theme.contentTokens, c = t.controlChrome;
+    assert(ratio(c.normal.ink,c.normal.fill) >= 4.5);
+    assert(ratio(c.normal.border,theme.titleBarColor) >= 3);
+    assert(ratio(c.hover.ink,c.hover.fill) >= 4.5);
+    assert(ratio(t.thumb,t.track) >= 3);
+    assert.notEqual(c.normal.ink,c.disabled.ink);
+  }
+});
