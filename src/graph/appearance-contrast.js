@@ -4,6 +4,11 @@ const channels = hex => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 const fromChannels = rgb => rgb.reduce((hex, component) => (hex << 8) + Math.round(component), 0);
 const mix = (from, to, ratio) => from.map((component, index) => component * (1 - ratio) + to[index] * ratio);
 
+export const GRAPH_CAPTION_PALETTE = Object.freeze({
+  light: Object.freeze({ labelText: 0x16283d, labelFill: 0xf8fafc, labelBorder: 0x49647f }),
+  dark: Object.freeze({ labelText: 0xf3f8ff, labelFill: 0x223145, labelBorder: 0x91abc6 }),
+});
+
 function luminance(rgb) {
   const [r, g, b] = rgb.map(value => {
     const channel = value / 255;

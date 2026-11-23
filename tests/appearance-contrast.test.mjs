@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { graphContrastColor, graphContrastRatio } from "../src/graph/appearance-contrast.js";
+import { GRAPH_CAPTION_PALETTE, graphContrastColor, graphContrastRatio } from "../src/graph/appearance-contrast.js";
 import { graphPanelTheme } from "../src/graph/panel-theme.js";
 
 test("blue, green and gold graph edges remain distinct at accessible composited contrast", () => {
@@ -23,4 +23,14 @@ test("pills retain a tinted fill and strong text contrast; opaque white markers 
   assert.notEqual(port, 0xffffff);
   assert(graphContrastRatio(port, bg) >= 4);
   assert.equal(graphContrastColor(0xffffff, 0x192636, 4, 1, "lighter"), 0xffffff);
+});
+
+test("opaque caption outlines are distinguishable from both the backdrop and the card fill", () => {
+  for (const mode of ["light", "dark"]) {
+    const world = graphPanelTheme(mode).background;
+    const { labelBorder, labelFill, labelText } = GRAPH_CAPTION_PALETTE[mode];
+    assert(graphContrastRatio(labelBorder, world) >= 4.5);
+    assert(graphContrastRatio(labelBorder, labelFill) >= 3);
+    assert(graphContrastRatio(labelText, labelFill) >= 10);
+  }
 });

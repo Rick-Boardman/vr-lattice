@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { findGraphSceneAppearance } from "./scene-appearance.js";
-import { graphContrastColor } from "./appearance-contrast.js";
+import { GRAPH_CAPTION_PALETTE, graphContrastColor } from "./appearance-contrast.js";
 import { graphPanelTheme } from "./panel-theme.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
 import {
@@ -134,9 +134,9 @@ const DEFAULT_CARD_HIGHLIGHT_COLOR = 0x78deff;
 const DEFAULT_CARD_HOVER_HIGHLIGHT_COLOR = 0xe8f7ff;
 const CARD_APPEARANCE = {
   light: { world: graphPanelTheme("light").background, body: 0xf8fafc, inactive: 0xe9eef4, bodyText: 0x30465f, border: 0xb3c1d0,
-    rule: "#d5dfe9", selected: 0x305477, hover: 0x537ea3, labelText: 0x2c4058, labelFill: 0xf8fafc },
+    rule: "#d5dfe9", selected: 0x305477, hover: 0x537ea3, ...GRAPH_CAPTION_PALETTE.light },
   dark: { world: graphPanelTheme("dark").background, body: 0x192636, inactive: 0x15202d, bodyText: 0xd4dfeb, border: 0x506780,
-    rule: "#3c5066", selected: 0x96b9d9, hover: 0x718da8, labelText: 0xe1ebf5, labelFill: 0x223145 },
+    rule: "#3c5066", selected: 0x96b9d9, hover: 0x718da8, ...GRAPH_CAPTION_PALETTE.dark },
 };
 const GRAPH_NODE_TITLE_FONT_FAMILY = "monospace";
 const GRAPH_NODE_TITLE_FONT = buildGraphNodeTitleFont(DEFAULT_CARD_TITLE_FONT_SIZE_PX);
@@ -2577,12 +2577,41 @@ function applyEdgeLabelAppearance(THREE, label, appearance) {
     const oldGeometry = backgroundMesh.geometry;
     backgroundMesh.geometry = createRoundedCardGeometry({ THREE, width, height: 0.86, cornerRadius: 0.22 });
     oldGeometry.dispose();
+    const outlineWidth = 0.105;
+    const outline = new THREE.Mesh(
+      createRoundedCardGeometry({ THREE, width: width + 2 * outlineWidth,
+        height: 0.86 + 2 * outlineWidth, cornerRadius: 0.22 + outlineWidth }),
+      new THREE.MeshBasicMaterial({ color: appearance.labelBorder,
+        transparent: true, depthTest: true, depthWrite: false }),
+    );
+    outline.name = "edge-caption-outline";
+    outline.position.z = -0.01;
+    outline.onBeforeRender = (...args) => backgroundMesh.onBeforeRender(...args);
+    outline.renderOrder = backgroundMesh.renderOrder - 0.005;
+    // Keep the visible border separate from the edge's existing hit target.
+    label.add(outline);
+    const setRenderOrder = label.setRenderOrder;
+    label.setRenderOrder = (order) => {
+      setRenderOrder(order);
+      outline.renderOrder = backgroundMesh.renderOrder - 0.005;
+    };
+    const dispose = label.dispose;
+    label.dispose = () => {
+      outline.geometry.dispose();
+      outline.material.dispose();
+      dispose();
+    };
+    label.userData.captionOutline = outline;
     textMesh.maxWidth = width * 0.9;
-    textMesh.fontSize *= 1.24;
+    textMesh.fontSize *= 1.31;
     label.userData.hasCompactCaption = true;
   }
   textMesh.color = appearance.labelText;
+  textMesh.outlineWidth = textMesh.fontSize * 0.025;
+  textMesh.outlineColor = appearance.labelText;
+  textMesh.outlineOpacity = 1;
   textMesh.sync?.();
+  label.userData.captionOutline.material.color.setHex(appearance.labelBorder);
   backgroundMesh.material.color.setHex(appearance.labelFill);
   backgroundMesh.material.opacity = 0.96;
 }
