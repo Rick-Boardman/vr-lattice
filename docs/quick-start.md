@@ -104,7 +104,7 @@ to migrate choices from old keys.
 
 Settings is closable and created only when opened. Put
 `createGraphSettingsHotbarItem({ THREE })` in an existing hotbar and route its
-action to the control's `toggleSettings()`. If the host owns its Settings UI,
+action to the control's `toggleSettings()`. Alt+Shift+S also opens Settings on the web, except while typing in another form or inline editor. If the host owns its Settings UI,
 pass `settings: false`; use an external Halo appearance `preference` if the host
 also owns the preference and media-query lifetime. The control unsubscribes
 when the graph is disposed, or you can call `dispose()` directly.

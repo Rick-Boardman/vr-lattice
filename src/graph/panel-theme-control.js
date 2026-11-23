@@ -34,7 +34,7 @@ export function installGraphPanelThemeControl(ctx, options = {}) {
   if (typeof ctx?.setPanelTheme!=="function" || typeof hud?.createWindow!=="function" ||
       typeof hud?.setWindowLines!=="function") return null;
   if (installed.has(ctx)) return installed.get(ctx);
-  const {windowKey=DEFAULT_WINDOW_KEY,title="Settings",x,y,settings=true,keyboardShortcutTarget,platform=globalThis,preference:external}=options;
+  const {windowKey=DEFAULT_WINDOW_KEY,title="Settings",x,y,settings=true,platform=globalThis,keyboardShortcutTarget=platform.document,preference:external}=options;
   const pref = external ?? createHudAppearancePreference(preferenceOptions(options));
   let current;
   let disposed = false;
