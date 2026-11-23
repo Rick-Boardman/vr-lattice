@@ -3,22 +3,22 @@
 const lightContent = Object.freeze({ surface: 0xf8fafc, text: 0x22354a, row: 0xf1f5f9, selectedRow: 0xd7e7f8,
   field: 0xffffff, fieldText: 0x0b2137, fieldBorder: 0x5e748a, focus: 0x1d5790,
   selection: 0xc0dcfa, selectionOpacity: 0.72, selectionText: 0x0b2137, caret: 0x0b2137,
-  disabledField: 0xe8edf3, disabledText: 0x455c74, hotbarTitle: 0x091d30, hotbarFill: 0x31475d, hotbarActive: 0x245e96, accent: 0x245e96, accentText: 0xffffff, track: 0xd9e4ef, thumb: 0x738da6 });
+  disabledField: 0xe8edf3, disabledText: 0x455c74, headerDivider: 0x607892, headerControl: 0x1c334c, headerControlHover: 0x08233f, hotbarTitle: 0x091d30, hotbarFill: 0x31475d, hotbarActive: 0x245e96, accent: 0x245e96, accentText: 0xffffff, track: 0xd9e4ef, thumb: 0x738da6 });
 const darkContent = Object.freeze({ surface: 0x182536, text: 0xe9f0f9, row: 0x1c2a3d, selectedRow: 0x294b74,
   field: 0x23384d, fieldText: 0xf1f6fc, fieldBorder: 0x8aa3bd, focus: 0xa8d4ff,
   selection: 0x375b85, selectionOpacity: 0.76, selectionText: 0xffffff, caret: 0xffffff,
-  disabledField: 0x26384a, disabledText: 0x9bb0c6, hotbarFill: 0x293e54, hotbarActive: 0x245e96, accent: 0x2a5e93, accentText: 0xffffff, track: 0x25364a, thumb: 0x849ab4 });
+  disabledField: 0x26384a, disabledText: 0x9bb0c6, headerDivider: 0x849db8, headerControl: 0xc9ddf3, headerControlHover: 0xffffff, hotbarFill: 0x293e54, hotbarActive: 0x245e96, accent: 0x2a5e93, accentText: 0xffffff, track: 0x25364a, thumb: 0x849ab4 });
 
 const common = { panelBgOpacity: 1, titleBarOpacity: 1, contentBgOpacity: 1,
   borderOpacity: 1, borderInset: 0, controlStyle: "quiet" };
 
 export const GRAPH_PANEL_THEMES = Object.freeze({
   light: Object.freeze({ ...common, key: "light", panelBgColor: 0xc5d1df,
-    titleBarColor: 0xf3f6fb, contentBgColor: 0xf8fafc, contentTokens: lightContent, titleTextColor: 0x1b304a,
+    titleBarColor: 0xc7d8ea, contentBgColor: 0xf8fafc, contentTokens: lightContent, titleTextColor: 0x1b304a,
     borderColor: 0x8499b2, accentColor: 0x245b98, background: 0xe7edf5,
     labelColor: 0x17283c, labelBackgroundColor: 0xf4f7fc }),
   dark: Object.freeze({ ...common, key: "dark", panelBgColor: 0x111a26,
-    titleBarColor: 0x1c2b3e, contentBgColor: 0x182536, contentTokens: darkContent, titleTextColor: 0xe9f1fb,
+    titleBarColor: 0x344b65, contentBgColor: 0x182536, contentTokens: darkContent, titleTextColor: 0xe9f1fb,
     borderColor: 0x546c88, accentColor: 0x8dc4ff, background: 0x0a1320,
     labelColor: 0xe8f2ff, labelBackgroundColor: 0x101a29 }),
 });
