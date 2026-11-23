@@ -2173,7 +2173,7 @@ function nativeCardHeaderInkWidth(record, mesh, text, fontSizePx, rasterFont) {
 async function fitMeasuredCardHeaderLine(value, limit, measure, fullWidth) {
   if (!value || limit <= 0) return { text: "", width: 0 };
   const entire = fullWidth ?? await measure(value);
-  if (entire <= limit) return { text: value, width: entire };
+  if (entire <= limit + 1e-6) return { text: value, width: entire };
   const ellipsis = "..."; // The bundled graph font always has the period glyph.
   let best = { text: ellipsis, width: await measure(ellipsis) };
   if (best.width > limit) return { text: "", width: 0 };
@@ -2185,7 +2185,7 @@ async function fitMeasuredCardHeaderLine(value, limit, measure, fullWidth) {
     const length = (left + right) >> 1;
     const text = chars.slice(0, length).join("").trimEnd() + ellipsis;
     const width = await measure(text);
-    if (width <= limit) {
+    if (width <= limit + 1e-6) {
       best = { text, width };
       left = length + 1;
     } else right = length - 1;
