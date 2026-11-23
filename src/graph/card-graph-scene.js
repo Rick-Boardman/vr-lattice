@@ -131,6 +131,8 @@ const DEFAULT_EDGE_LABEL_MIN_WORLD_WIDTH = 5.2;
 const NODE_STACK_RENDER_ORDER_STEP = 10;
 const DEFAULT_CARD_BADGE_TOP_PX = 24;
 const DEFAULT_CARD_BADGE_HORIZONTAL_GAP_PX = 14;
+const CARD_BADGE_RIGHT_INSET_PX = 48;
+const CARD_BADGE_TRAILING_COMFORT_PX = 4;
 const DEFAULT_CARD_BADGE_MIN_HEIGHT_PX = 54;
 const DEFAULT_CARD_BADGE_MIN_WIDTH_PX = 120;
 const DEFAULT_CARD_BODY_STRIP_FONT_SIZE_PX = 22;
@@ -2076,6 +2078,38 @@ function setNodeTextMesh(record, textMesh, {
   });
 }
 
+// A centered advance box is not the same as centered visible letterforms.
+// Reuse the metrics across card repaints and leave a subtle trailing comfort
+// margin. The nominal pill center can still move when adjacent badges change.
+function centerCardBadgeInk(record, mesh, xPx) {
+  if (!mesh?.visible) return;
+  const center = pxToCardLocalX(record, xPx) - pxToCardWorldSize(record, CARD_BADGE_TRAILING_COMFORT_PX);
+  if (!(mesh instanceof TroikaText)) {
+    mesh.position.x = center;
+    return;
+  }
+  const key = JSON.stringify([mesh.text, mesh.font, mesh.unicodeFontsURL, mesh.fontSize, mesh.fontWeight]);
+  let bounds = mesh.userData.graphBadgeInkBounds;
+  if (bounds?.key !== key) {
+    bounds = { key, center, correction: 0 };
+    mesh.userData.graphBadgeInkBounds = bounds;
+    getTextRenderInfo({
+      text: mesh.text, font: mesh.font, unicodeFontsURL: mesh.unicodeFontsURL,
+      fontWeight: mesh.fontWeight, fontSize: mesh.fontSize, anchorX: "center",
+      anchorY: "middle", textAlign: "center", lineHeight: mesh.lineHeight,
+      sdfGlyphSize: mesh.sdfGlyphSize, sdfExponent: mesh.sdfExponent,
+    }, ({ visibleBounds }) => {
+      if (mesh.userData.graphBadgeInkBounds !== bounds || !mesh.parent) return;
+      const [left, , right] = visibleBounds;
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return;
+      bounds.correction = (left + right) / 2;
+      mesh.position.x = bounds.center - bounds.correction;
+    });
+  }
+  bounds.center = center;
+  mesh.position.x = center - bounds.correction;
+}
+
 function createPorts({ THREE, node, ports, side, anchorWidth, anchorHeight, portRadius, getPortColor }) {
   const list = Array.isArray(ports) && ports.length ? ports : [];
   const total = Math.max(1, list.length);
@@ -2340,7 +2374,7 @@ function updateCardTexture({
     badge ? { text: badge, mesh: record.textMeshes.statusBadgeText } : null,
   ].filter(Boolean);
   // Leave room for the title and keep the inter-pill gap independent of padding.
-  const badgeWidthBudget = Math.max(1, (width - 36 - 30 - 220 - 64
+  const badgeWidthBudget = Math.max(1, (width - 36 - CARD_BADGE_RIGHT_INSET_PX - 220 - 64
     - badgeLayout.gapPx * Math.max(0, badgeEntries.length - 1)) / Math.max(1, badgeEntries.length));
   const badgeMetrics = badgeEntries.map((entry) => ({
     ...entry,
@@ -2362,7 +2396,7 @@ function updateCardTexture({
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
-  const titleMaxWidth = Math.max(1, width - 72 - (badgeGroupWidth ? badgeGroupWidth + 64 : 48));
+  const titleMaxWidth = Math.max(1, width - 72 - (badgeGroupWidth ? badgeGroupWidth + 64 + (CARD_BADGE_RIGHT_INSET_PX - 30) : 48));
   // Canvas and the actual world font differ slightly. Keep the ellipsis within
   // the visible title area, then clip only any exceptional glyph overhang.
   const titleLines = wrapTextLines(ctx, title, titleMaxWidth * 0.92, 1);
@@ -2427,7 +2461,7 @@ function updateCardTexture({
   }
 
   if (badgeMetrics.length) {
-    let rightEdgeX = width - 30;
+    let rightEdgeX = width - CARD_BADGE_RIGHT_INSET_PX;
     for (let index = badgeMetrics.length - 1; index >= 0; index -= 1) {
       const entry = badgeMetrics[index];
       const x = rightEdgeX - entry.pillWidth;
@@ -2446,6 +2480,7 @@ function updateCardTexture({
         anchorX: "center",
         anchorY: "middle",
       });
+      centerCardBadgeInk(record, entry.mesh, x + entry.pillWidth * 0.5);
       rightEdgeX = x - badgeLayout.gapPx;
     }
   }
