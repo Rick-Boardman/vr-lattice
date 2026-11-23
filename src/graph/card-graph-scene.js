@@ -1305,6 +1305,7 @@ export function createCardGraphScene({
     appearance = next;
     for (const record of nodeRecords.values()) {
       record.appearance = next;
+      if (record.texture.colorSpace !== THREE.SRGBColorSpace) record.texture.colorSpace = THREE.SRGBColorSpace;
       redrawNode(record);
     }
     for (const edge of edgeRecords) {
@@ -1649,6 +1650,9 @@ function createNodeRecord({
   canvas.width = cardCanvasWidth;
   canvas.height = cardCanvasHeight;
   const texture = new THREE.CanvasTexture(canvas);
+  // CSS colors written into the canvas are sRGB. Treating them as linear washes out
+  // the colored ribbons and badge fills when the renderer converts to sRGB output.
+  if (appearance) texture.colorSpace = THREE.SRGBColorSpace;
   configureCanvasTexture(THREE, texture, canvas);
 
   const shadowMesh = new THREE.Mesh(
@@ -2143,7 +2147,7 @@ function updateCardTexture({
   const bodyFont = appearance ? `${record.cardBodyFontSizePx}px sans-serif`
     : (record.cardBodyFont ?? `${DEFAULT_CARD_BODY_FONT_SIZE_PX}px monospace`);
   const titleFontSizePx = Number(record.cardTitleFontSizePx ?? DEFAULT_CARD_TITLE_FONT_SIZE_PX);
-  const badgeFontSizePx = Number(record.cardBadgeFontSizePx ?? DEFAULT_CARD_BADGE_FONT_SIZE_PX) * (appearance ? 1.18 : 1);
+  const badgeFontSizePx = Number(record.cardBadgeFontSizePx ?? DEFAULT_CARD_BADGE_FONT_SIZE_PX) * (appearance ? 1.28 : 1);
   const bodyFontSizePx = Number(record.cardBodyFontSizePx ?? DEFAULT_CARD_BODY_FONT_SIZE_PX);
   const bodyLineGapPx = Number(record.cardBodyLineGapPx ?? 34);
   const stripFontSizePx = Number(record.cardBodyStripFontSizePx ?? DEFAULT_CARD_BODY_STRIP_FONT_SIZE_PX);
@@ -2290,6 +2294,8 @@ function updateCardTexture({
         fontSizePx: badgeFontSizePx,
         color: badgeTextColor,
         fontWeight: "bold",
+        outlineWidthPx: appearance ? badgeFontSizePx * 0.035 : 0,
+        outlineColor: badgeTextColor,
         textAlign: "center",
         anchorX: "center",
         anchorY: "middle",
