@@ -124,7 +124,15 @@ per mounted graph. Enrich the resolved target with a host-specific unique `key`,
 current document identity in `document`, and (for Notes) `multiline: true`.
 Use `createSceneEditGesture()` to qualify the browser's double-click against the
 same two stationary primary clicks; optionally defer normal single-click
-inspector reveal with `deferInspect`. Call `editor.open(target, currentText)`,
+inspector reveal with `deferInspect`. A normal selection should reveal the
+Inspector **without activating a text field**. A desktop double-click can
+arrive after that reveal; keep the Inspector away from the selected pointer
+location and preserve that position through the second press. Still block
+inline authoring during an intentional Inspector text edit or modal. For
+products whose graphs overlap, honor the ordinary topmost hit rather than
+editing an obscured card.
+
+Call `editor.open(target, currentText)`,
 `editor.update()` on frames, and `editor.dispose()` on unmount. Hosts validate
 permissions and document identity again in `onCommit` and run their existing
 domain mutation, undo and persistence path; Lattice never writes a document.
