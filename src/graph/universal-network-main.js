@@ -427,7 +427,7 @@ export async function runUniversalNetworkScene(config) {
   const explicitLabelColors = new WeakSet();
   const applyLabelTheme = (label, theme) => {
     if (!theme) return;
-    const { textMesh, backgroundMesh } = label.userData;
+    const { textMesh, backgroundMesh, borderMesh } = label.userData;
     if (textMesh) {
       if (!explicitLabelColors.has(label)) textMesh.color = theme.labelColor;
       textMesh.fillOpacity = 1;
@@ -436,6 +436,7 @@ export async function runUniversalNetworkScene(config) {
       backgroundMesh.material.color.setHex(theme.labelBackgroundColor);
       backgroundMesh.material.opacity = 1;
     }
+    borderMesh?.material?.color.setHex(theme.labelBorderColor);
   };
   const makeLabelSprite = makeLabelSpriteFactory({
     THREE,

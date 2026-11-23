@@ -41,3 +41,19 @@ test("opt-in universal network label is larger, bolder and overlays strokes", ()
     legacy.dispose();
   }
 });
+
+test("native network label has a true inset outline, not a plate covering its fill", () => {
+  const label = makeLabelSpriteFactory({ THREE, Text: TestText, legible: true })({ text: "Node" });
+  try {
+    const { backgroundMesh, borderMesh, textMesh } = label.userData;
+    label.updateMatrixWorld(true);
+    const rayAt = (x, y) => new THREE.Raycaster(new THREE.Vector3(x, y, 2), new THREE.Vector3(0, 0, -1));
+    assert.ok(rayAt(0.1, 0.1).intersectObject(backgroundMesh).length);
+    assert.equal(rayAt(0.1, 0.1).intersectObject(borderMesh).length, 0);
+    assert.ok(rayAt(0.1, 0.96).intersectObject(borderMesh).length);
+    assert.equal(rayAt(3.99, 0.99).intersectObject(backgroundMesh).length, 0);
+    assert.ok(backgroundMesh.renderOrder < borderMesh.renderOrder && borderMesh.renderOrder < textMesh.renderOrder);
+  } finally {
+    label.dispose();
+  }
+});
