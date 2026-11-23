@@ -37,6 +37,7 @@ import { createGraphSettingsHotbarItem, installGraphPanelThemeControl, resolveGr
 import { graphPanelTheme } from "./panel-theme.js";
 import { createBusinessIconTextures } from "./business-icons.js";
 import { graphContrastColor } from "./appearance-contrast.js";
+import { createNetworkViewModel, deriveNetworkView, networkGroupKey, networkFitDistance } from "./network-view.js";
 
 
 const GRAPH_HOTBAR_HINT_COLOR = 0x7cd992;
@@ -101,6 +102,7 @@ function compileJsonConfig(json) {
     title: String(json.title || json.id || "graph"),
     isOculusBrowser: oculus,
 
+    networkView: json?.networkView || null,
     context: {
       renderer: {
         antialias: !oculus,
@@ -376,14 +378,23 @@ export async function runUniversalNetworkScene(config) {
   // For default universals keep indexes 0-3, then Settings; if Help/Debug
   // are reserved, give them their own appended slots rather than stealing 2/3.
   const settingsIndex=prefOptions && prefOptions.settings!==false ? Math.max(4,baselineSlots) : -1;
-  const slotCount=settingsIndex>=0 ? settingsIndex+1+(graphHud.reserveSystemHotbarSlots===false?0:2) : baselineSlots;
+  const networkViewOptions = config.networkView;
+  const viewIndex = networkViewOptions ? Math.max(4, baselineSlots, settingsIndex + 1) : -1;
+  const authoredSlots = Math.max(settingsIndex + 1, viewIndex + 1);
+  const slotCount=authoredSlots>0 ? authoredSlots+(graphHud.reserveSystemHotbarSlots===false?0:2) : baselineSlots;
   const bakedMode=prefOptions ? (prefOptions.preference?.getMode?.() ?? resolveGraphPanelTheme(prefOptions)) : null;
   const settingsItem=settingsIndex>=0 ? createGraphSettingsHotbarItem({THREE}) : null;
-  const networkIcons=settingsItem ? createBusinessIconTextures(THREE,["connectors","view","refresh","fit"]) : {};
+  const networkIcons=settingsItem || networkViewOptions ? createBusinessIconTextures(THREE,["connectors","view","refresh","fit"]) : {};
   const hotbarTooltips=Array.isArray(config.hud?.tooltips)
     ? [...config.hud.tooltips] : ["Toggle edges","Toggle labels","Reload network","Reset view"];
   if(settingsItem) hotbarTooltips[settingsIndex]=settingsItem.tooltip;
+  if(viewIndex >= 0) hotbarTooltips[viewIndex]="Network View: Overview, Focus, All Links";
   let settingsControl=null;
+  let networkModel = null, visibleView = null, viewOpen = false;
+  let allLinks = false, selectedGroup = null, focused = false;
+  const changedHosts = new Set(), groupLabels = new Map();
+  let summaryLines = [], visiblePulseLines = [];
+  const viewWindowKey = "lattice-network-view";
 
 
   let showEdges = true;
@@ -466,7 +477,7 @@ export async function runUniversalNetworkScene(config) {
       hud: {
         ...graphHud,
         ...(bakedMode ? {theme:bakedMode} : {}),
-        ...(settingsItem ? {hotbarSlotCount:slotCount} : {}),
+        ...(authoredSlots > 0 ? {hotbarSlotCount:slotCount} : {}),
         hotbarTooltips:settingsItem ? hotbarTooltips : Array.isArray(config?.hud?.tooltips) ? config.hud.tooltips : undefined,
         onHotbarSlot: (ev) => handleHotbarSlot(ev),
       },
@@ -495,23 +506,26 @@ export async function runUniversalNetworkScene(config) {
       }
 
       // Distance-based label culling
-      if (showLabels && labelSprites.length) {
+      if (showLabels && (labelSprites.length || groupLabels.size)) {
         _ctx.camera.getWorldPosition(_labelCamPos);
         _ctx.camera.getWorldDirection(_labelCamForward);
         _visibleOpaqueLabels.length = 0;
-        for (const spr of labelSprites) {
+        for (const spr of [...labelSprites, ...groupLabels.values()]) {
+          if (networkModel && (spr.userData.groupKey ? !visibleView?.overview : !visibleView?.nodeIds.has(spr.userData.nodeId))) {
+            spr.visible = false; continue;
+          }
           spr.getWorldPosition(_labelSpritePos);
           const dist = _labelCamPos.distanceTo(_labelSpritePos);
           if (activePanelTheme) {
             // A themed plate is a readability surface, not a translucent
             // decoration: keep its ink and backing solid until culled together.
-            spr.visible = dist <= LABEL_MAX_DISTANCE;
+            spr.visible = Boolean(spr.userData.groupKey) || dist <= LABEL_MAX_DISTANCE;
             if (spr.visible) {
               const layer = spr.userData.opaqueNetworkLayer ??= { label: spr, depth: 0 };
               layer.depth = _labelSpritePos.sub(_labelCamPos).dot(_labelCamForward);
               _visibleOpaqueLabels.push(layer);
             }
-          } else if (dist > LABEL_MAX_DISTANCE) {
+          } else if (!spr.userData.groupKey && dist > LABEL_MAX_DISTANCE) {
             spr.visible = false;
           } else {
             spr.visible = true;
@@ -528,11 +542,11 @@ export async function runUniversalNetworkScene(config) {
 
       if (nodeMeshes.length) {
         const tS = nowSeconds();
-        pulseEffect.setEdgeEmphasis(edgeLines, {
+        pulseEffect.setEdgeEmphasis(networkModel ? visiblePulseLines : edgeLines, {
           dimOpacity: config?.pulse?.dimOpacity,
           brightOpacity: config?.pulse?.brightOpacity,
         });
-        pulseEffect.update(tS, nodeById, edgeLines, { speed: config?.pulse?.speed });
+        pulseEffect.update(tS, nodeById, networkModel ? visiblePulseLines : edgeLines, { speed: config?.pulse?.speed });
       }
     },
     onFps: (_ctx, fps) => {
@@ -558,8 +572,8 @@ export async function runUniversalNetworkScene(config) {
     settingsControl=installGraphPanelThemeControl(ctx,prefOptions);
     ctx.appearanceSettings=settingsControl;
   }
-  if(settingsItem) ctx.onDispose?.(()=>{
-    settingsItem.iconTexture?.dispose?.();
+  if(settingsItem || networkViewOptions) ctx.onDispose?.(()=>{
+    settingsItem?.iconTexture?.dispose?.();
     for(const texture of Object.values(networkIcons)) texture?.dispose?.();
   });
 
@@ -652,7 +666,7 @@ export async function runUniversalNetworkScene(config) {
 
   const syncGraphAppearance=theme=>{
     activePanelTheme=theme;
-    for(const label of labelSprites) applyLabelTheme(label,theme);
+    for(const label of [...labelSprites,...groupLabels.values()]) applyLabelTheme(label,theme);
     if(!prefOptions) return;
     pulseEffect.setTheme(theme?.key);
     for(const mesh of nodeMeshes) refreshNodeInk(mesh,theme);
@@ -691,10 +705,16 @@ export async function runUniversalNetworkScene(config) {
     labelSprites = [];
     nodeById.clear();
 
+    for (const label of groupLabels.values()) { networkRoot.remove(label); label.dispose?.(); }
+    groupLabels.clear();
+    clearSummaryLines();
+    networkModel = visibleView = null;
+    allLinks = focused = false; selectedGroup = null; changedHosts.clear();
     pulseEffect.clear();
   }
 
   function applyToggles() {
+    if (networkModel) { updateNetworkView(); return; }
     for (const l of edgeLines) l.visible = showEdges;
     for (const s of labelSprites) s.visible = showLabels;
 
@@ -704,8 +724,178 @@ export async function runUniversalNetworkScene(config) {
     });
   }
 
+  function clearSummaryLines() {
+    for (const line of summaryLines) {
+      networkRoot.remove(line);
+      line.geometry?.dispose?.();
+      line.material?.dispose?.();
+    }
+    summaryLines = [];
+  }
+
+  function buildGroupLabels() {
+    if (networkViewOptions.summarizeOverview !== true || networkModel.groups.size < 2) return;
+    for (const [group, ids] of networkModel.groups) {
+      const key = networkGroupKey(group);
+      if (nodeById.has(key)) continue;
+      const label = makeLabelSprite({ text: group, color: "#dde3ea" });
+      const position = new THREE.Vector3();
+      let highest = -Infinity, count = 0;
+      for (const id of ids) {
+        const mesh = nodeById.get(id);
+        if (!mesh) continue;
+        position.add(mesh.position);
+        highest = Math.max(highest, mesh.position.y);
+        count++;
+      }
+      if (!count) { label.dispose?.(); continue; }
+      position.multiplyScalar(1 / count);
+      position.y = highest + 4;
+      label.position.copy(position);
+      label.scale.multiplyScalar(1.15);
+      label.userData.groupKey = key;
+      if (label.userData.backgroundMesh) label.userData.backgroundMesh.userData.id = key;
+      applyLabelTheme(label, activePanelTheme);
+      groupLabels.set(key, label);
+      networkRoot.add(label);
+    }
+  }
+
+  function networkPickTargets() {
+    return [
+      ...nodeMeshes.filter(mesh => mesh.visible),
+      ...[...groupLabels.values()].filter(label => label.visible && label.userData.backgroundMesh)
+        .map(label => label.userData.backgroundMesh),
+    ];
+  }
+
+  function updateNetworkView() {
+    if (!networkModel) return;
+    visibleView = deriveNetworkView(networkModel, {
+      all: allLinks, groupId: selectedGroup, nodeId: selectedNodeId, focused, expandedHosts: changedHosts,
+    });
+    for (const node of nodeMeshes) node.visible = visibleView.nodeIds.has(node.userData.id);
+    for (const label of labelSprites) label.visible = showLabels && visibleView.nodeIds.has(label.userData.nodeId);
+    for (const label of groupLabels.values()) label.visible = showLabels && visibleView.overview;
+    const raw = new Set(visibleView.raw);
+    for (const line of edgeLines) line.visible = showEdges && raw.has(line.userData.sourceEdge);
+    clearSummaryLines();
+    if (showEdges) for (const edge of visibleView.aggregated) {
+      const from = groupLabels.get(edge.fromId) ?? nodeById.get(edge.fromId);
+      const to = groupLabels.get(edge.toId) ?? nodeById.get(edge.toId);
+      if (!from || !to) continue;
+      const line = config.render.buildEdgeLine({
+        THREE, edge: { ...edge, type: "summary" }, fromPos: from.position, toPos: to.position, ctx,
+      });
+      line.userData.edge = { ...edge, aggregate: true };
+      line.userData.pulseable = false;
+      if (prefOptions) refreshEdgeInk(line, activePanelTheme);
+      summaryLines.push(line);
+      networkRoot.add(line);
+    }
+    visiblePulseLines = edgeLines.filter(line => line.visible);
+    pulseEffect.rebuild(visiblePulseLines);
+    updatePulseActive();
+    renderNetworkViewPanel();
+  }
+
+  function fitNetworkView() {
+    if (!visibleView || renderer.xr?.isPresenting) return false;
+    const box = new THREE.Box3();
+    for (const mesh of nodeMeshes) if (mesh.visible) box.expandByObject(mesh);
+    if (visibleView.overview) for (const label of groupLabels.values()) if (label.visible) box.expandByObject(label);
+    if (box.isEmpty()) return false;
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const center = sphere.center;
+    const radius = Math.max(2, sphere.radius);
+    const distance = Math.max(8, networkFitDistance(radius, camera.fov, camera.aspect));
+    for (const label of groupLabels.values()) {
+      const base = label.userData.overviewBaseScale ??= label.scale.clone();
+      label.scale.copy(base).multiplyScalar(Math.max(1, distance / 92));
+    }
+    // A stable elevated outlook shows the entire layout instead of choosing one random group.
+    const out = new THREE.Vector3(0.08, 0.61, 0.8).normalize();
+    rig.player.position.copy(center).addScaledVector(out, distance);
+    camera.far = Math.max(camera.far, distance + 2.2 * radius);
+    camera.updateProjectionMatrix();
+    if (scene.fog?.isFog) {
+      scene.fog.near = Math.max(0, distance - 1.06 * radius);
+      scene.fog.far = distance + 3 * radius;
+    }
+    navigation?.lookAtWorld?.(center);
+    return true;
+  }
+
+  function restoreNetworkOverview() {
+    setSelected(null);
+    applyGenericNodeHighlight(nodeMeshes, { selectedId: null, hoveredId: hoveredNodeId });
+    fitNetworkView();
+  }
+
+  function focusNetworkSelection() {
+    if (!selectedNodeId && selectedGroup == null) return;
+    allLinks = false; focused = true;
+    updateNetworkView(); fitNetworkView();
+  }
+
+  function toggleNetworkHost(id) {
+    if (!networkModel?.children.has(id)) return false;
+    if (changedHosts.has(id)) changedHosts.delete(id); else changedHosts.add(id);
+    allLinks = false;
+    updateNetworkView();
+    return true;
+  }
+
+  function showAllNetworkLinks() {
+    showEdges = true;
+    allLinks = true; focused = false;
+    updateNetworkView(); updateHotbarVisuals();
+  }
+
+  function renderNetworkViewPanel() {
+    if (!viewOpen || !networkModel) return;
+    const action = (text, label, onClick) => ({
+      text, actionButtonText: label, actionButtonWidthPx: 82, actionButtonOnClick: onClick,
+    });
+    const title = selectedGroup ?? (selectedNodeId ? pickTextFromFields(nodeById.get(selectedNodeId)?.userData.node, ["name", "label", "id"]) : null);
+    const rows = [
+      { text: allLinks ? "All links" : focused ? "Focused view" : title ? "Selected relationships" : "Overview" },
+      action("Return to overview", "Back", restoreNetworkOverview),
+      action("Show original relationships", "All Links", showAllNetworkLinks),
+      action("Frame visible graph", "Fit", fitNetworkView),
+    ];
+    const represented = visibleView?.aggregated.reduce((sum, edge) => sum + edge.count, 0) ?? 0;
+    if (represented) rows.push({ text: `${represented} links in ${visibleView.aggregated.length} grouped paths` });
+    if (title) rows.push(action(title, "Focus", focusNetworkSelection));
+    const children = networkModel.children.get(selectedNodeId);
+    if (children?.length) {
+      const open = allLinks || (networkModel.options.hierarchy?.collapsedByDefault === false
+        ? !changedHosts.has(selectedNodeId) : changedHosts.has(selectedNodeId));
+      rows.push(action(`${children.length} dependent items`, open ? "Collapse" : "Expand", () => toggleNetworkHost(selectedNodeId)));
+    }
+    if (!title && groupLabels.size) for (const group of networkModel.groups.keys()) {
+      rows.push(action(group, "Select", () => setSelected(networkGroupKey(group))));
+    }
+    hudSystem.setWindowLines(viewWindowKey, rows, { scrollMode: "top" });
+  }
+
+  function toggleNetworkViewPanel() {
+    if (viewOpen) {
+      viewOpen = false;
+      hudSystem.destroyWindow?.(viewWindowKey);
+    } else {
+      hudSystem.createWindow(viewWindowKey, {
+        title: "Network View", x: 16, y: 84, w: 326, h: 260, scrollable: true,
+        onClose: () => toggleNetworkViewPanel(),
+      });
+      viewOpen = true;
+      renderNetworkViewPanel();
+    }
+    updateHotbarVisuals();
+  }
+
   function updateHotbarVisuals() {
-    if(!settingsItem || typeof hudSystem.setHotbarItems!=="function"){
+    if((!settingsItem && !networkViewOptions) || typeof hudSystem.setHotbarItems!=="function"){
       defaultHotbarVisuals(hudSystem,[showEdges,showLabels,false,false]);
       return;
     }
@@ -720,27 +910,34 @@ export async function runUniversalNetworkScene(config) {
       items[index]={...items[index],systemSlot:false,showNumber:false,tooltip:hotbarTooltips[index],
         iconTexture,iconText:shortLabel,shortLabel,active};
     }
-    items[settingsIndex]={...settingsItem,systemSlot:false,showNumber:false};
+    if(settingsItem) items[settingsIndex]={...settingsItem,systemSlot:false,showNumber:false};
+    if(viewIndex >= 0) items[viewIndex]={systemSlot:false,showNumber:false,tooltip:hotbarTooltips[viewIndex],
+      iconTexture:networkIcons.view,iconText:"VIEW",shortLabel:"VIEW",active:viewOpen};
     hudSystem.setHotbarItems(items);
   }
 
   function setSelected(nodeId) {
-    selectedNodeId = nodeId || null;
+    if (networkModel) {
+      selectedGroup = nodeId && groupLabels.has(nodeId) ? nodeId.slice("group:".length) : null;
+      allLinks = false; focused = false;
+    }
+    selectedNodeId = selectedGroup ? null : nodeId || null;
     selectedAtS = nowSeconds();
 
-    hud.setSelectionCollapsed(!selectedNodeId);
+    hud.setSelectionCollapsed(!selectedNodeId && !selectedGroup);
 
     const lines = selectedNodeId
       ? config.templates.buildSelectionLines({ ctx, hud, graph, derived, nodeId: selectedNodeId })
-      : [{ text: "(none)", color: HUD_TEXT_DEFAULT_COLOR }];
+      : [{ text: selectedGroup ?? "(none)", color: HUD_TEXT_DEFAULT_COLOR }];
     hud.setSelectionLines(lines);
+    if (networkModel) updateNetworkView();
 
     // Hover overrides selection for pulse.
     updatePulseActive();
   }
 
   function setHovered(nodeId) {
-    hoveredNodeId = nodeId || null;
+    hoveredNodeId = nodeId && !groupLabels.has(nodeId) ? nodeId : null;
     if (hoveredNodeId) hoveredAtS = nowSeconds();
 
     if (!hoveredNodeId) {
@@ -787,7 +984,7 @@ export async function runUniversalNetworkScene(config) {
     } else {
       pulseEffect.setActiveNode(activeNodeId, hoveredNodeId ? hoveredAtS : selectedAtS);
     }
-    pulseEffect.setEdgeEmphasis(edgeLines, {
+    pulseEffect.setEdgeEmphasis(networkModel ? visiblePulseLines : edgeLines, {
       dimOpacity: config?.pulse?.dimOpacity,
       brightOpacity: config?.pulse?.brightOpacity,
     });
@@ -798,9 +995,9 @@ export async function runUniversalNetworkScene(config) {
     if (!pointerNdc) return null;
     _ndc.set(pointerNdc.x, pointerNdc.y);
     raycaster.setFromCamera(_ndc, camera);
-    raycaster.far = 680;
+    raycaster.far = networkModel ? camera.far : 680;
 
-    const hits = raycaster.intersectObjects(nodeMeshes, false);
+    const hits = raycaster.intersectObjects(networkModel ? networkPickTargets() : nodeMeshes, false);
     if (!hits || hits.length === 0) return null;
     const m = hits[0]?.object;
     const id = m?.userData?.id ?? m?.userData?.node?.id ?? null;
@@ -809,8 +1006,8 @@ export async function runUniversalNetworkScene(config) {
 
   function pickHitFromRay(rayOrigin, rayDir) {
     raycaster.set(rayOrigin, rayDir);
-    raycaster.far = 680;
-    const hits = raycaster.intersectObjects(nodeMeshes, false);
+    raycaster.far = networkModel ? camera.far : 680;
+    const hits = raycaster.intersectObjects(networkModel ? networkPickTargets() : nodeMeshes, false);
     if (!hits || hits.length === 0) return null;
     const hit = hits[0];
     const m = hit?.object;
@@ -887,7 +1084,7 @@ export async function runUniversalNetworkScene(config) {
       nodeById.set(id, mesh);
       networkRoot.add(mesh);
 
-      if (showLabels && config.render.labelText) {
+      if ((showLabels || networkViewOptions) && config.render.labelText) {
         const labelText = config.render.labelText({ node, ctx });
         if (labelText) {
           const labelColor = config.render.labelColor ? config.render.labelColor({ node, ctx }) : "#dde3ea";
@@ -924,6 +1121,7 @@ export async function runUniversalNetworkScene(config) {
       line.visible = showEdges;
 
       line.userData.edge = { ...e, fromId: a, toId: b };
+      line.userData.sourceEdge = e;
       if (line.userData.baseOpacity == null && line.material?.opacity != null) line.userData.baseOpacity = line.material.opacity;
       if (line.userData.baseColor == null && line.material?.color?.getHex) line.userData.baseColor = line.material.color.getHex();
 
@@ -936,7 +1134,11 @@ export async function runUniversalNetworkScene(config) {
       networkRoot.add(line);
     }
 
-    pulseEffect.rebuild(edgeLines);
+    if (networkViewOptions) {
+      const map = positions.clusterByNode ?? new Map();
+      networkModel = createNetworkViewModel(graph, map, networkViewOptions);
+      buildGroupLabels();
+    } else pulseEffect.rebuild(edgeLines);
     updatePulseActive();
 
     // Status + selection reset
@@ -954,7 +1156,8 @@ export async function runUniversalNetworkScene(config) {
 
     // Start/view (config-driven)
     try {
-      await config?.view?.applyInitialView?.({ THREE, ctx, graph, positions, nodeById, navigation, rig });
+      if (networkModel && !renderer.xr?.isPresenting) fitNetworkView();
+      else await config?.view?.applyInitialView?.({ THREE, ctx, graph, positions, nodeById, navigation, rig });
     } catch {
       // no-op
     }
@@ -962,6 +1165,7 @@ export async function runUniversalNetworkScene(config) {
 
   async function handleHotbarSlot(ev) {
     const idx = Number(ev?.index);
+    if (viewIndex>=0 && idx===viewIndex) { toggleNetworkViewPanel(); return; }
     if (settingsIndex>=0 && idx===settingsIndex) {settingsControl?.toggleSettings();return;}
     if (idx === 0) {
       showEdges = !showEdges;
@@ -981,6 +1185,7 @@ export async function runUniversalNetworkScene(config) {
       return;
     }
     if (idx === 3) {
+      if (networkModel && !renderer.xr?.isPresenting) {fitNetworkView(); return;}
       try {
         await config?.view?.resetView?.({ THREE, ctx, graph, positions: null, nodeById, navigation, rig });
       } catch {
@@ -1005,5 +1210,19 @@ export async function runUniversalNetworkScene(config) {
   // Initial HUD state.
   updateHotbarVisuals();
 
+  if (networkViewOptions) {
+    ctx.networkView = {
+      snapshot: () => visibleView ? { all: allLinks, focused, selectedGroup, selectedNodeId,
+        nodeIds: [...visibleView.nodeIds], raw: visibleView.raw.length, aggregates: visibleView.aggregated.map(edge => ({...edge})),
+        groups: [...(networkModel?.groups.keys() ?? [])] } : null,
+      showAll: showAllNetworkLinks,
+      back: restoreNetworkOverview,
+      focus: focusNetworkSelection,
+      selectGroup: id => { if (networkModel?.groups.has(id)) setSelected(networkGroupKey(id)); },
+      toggleHost: toggleNetworkHost,
+      fit: fitNetworkView,
+      togglePanel: toggleNetworkViewPanel,
+    };
+  }
   return ctx;
 }
