@@ -3,7 +3,7 @@ import { findGraphSceneAppearance } from "./scene-appearance.js";
 import { getGraphSceneEditSurface, setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
 import { layoutCardBodyText } from "./card-body-layout.js";
 import { getTextRenderInfo, Text as TroikaText } from "troika-three-text";
-import { GRAPH_CAPTION_PALETTE, graphContrastColor } from "./appearance-contrast.js";
+import { GRAPH_CAPTION_PALETTE, graphContrastColor, graphContrastRatio } from "./appearance-contrast.js";
 import { graphPanelTheme } from "./panel-theme.js";
 import { resolveNodeSurfaceReach } from "./node-surface.js";
 import {
@@ -2078,36 +2078,50 @@ function setNodeTextMesh(record, textMesh, {
   });
 }
 
-// A centered advance box is not the same as centered visible letterforms.
-// Reuse the metrics across card repaints and leave a subtle trailing comfort
-// margin. The nominal pill center can still move when adjacent badges change.
-function centerCardBadgeInk(record, mesh, xPx) {
+// Troika anchors its advance box, not the actual visible glyphs. Align
+// title ink and pill ink independently, without changing their hit geometry.
+function alignCardHeaderInk(record, mesh, { xPx, yPx, titleBounds = null } = {}) {
   if (!mesh?.visible) return;
-  const center = pxToCardLocalX(record, xPx) - pxToCardWorldSize(record, CARD_BADGE_TRAILING_COMFORT_PX);
+  const center = {
+    x: pxToCardLocalX(record, xPx) - (titleBounds ? 0 : pxToCardWorldSize(record, CARD_BADGE_TRAILING_COMFORT_PX)),
+    y: Number.isFinite(yPx) ? pxToCardLocalY(record, yPx) : mesh.position.y,
+  };
+  const apply = (bounds) => {
+    mesh.position.x = bounds.center.x - bounds.dx;
+    mesh.position.y = bounds.center.y - bounds.dy;
+    if (bounds.clip) {
+      const { left, right, top, bottom } = bounds.clip;
+      mesh.clipRect = [left - mesh.position.x, bottom - mesh.position.y,
+        right - mesh.position.x, top - mesh.position.y];
+    }
+  };
   if (!(mesh instanceof TroikaText)) {
-    mesh.position.x = center;
+    apply({ center, dx: 0, dy: 0, clip: titleBounds });
     return;
   }
-  const key = JSON.stringify([mesh.text, mesh.font, mesh.unicodeFontsURL, mesh.fontSize, mesh.fontWeight]);
-  let bounds = mesh.userData.graphBadgeInkBounds;
+  const params = {
+    text: mesh.text, font: mesh.font, unicodeFontsURL: mesh.unicodeFontsURL,
+    fontWeight: mesh.fontWeight, fontSize: mesh.fontSize, anchorX: mesh.anchorX,
+    anchorY: mesh.anchorY, textAlign: mesh.textAlign, lineHeight: mesh.lineHeight,
+    maxWidth: mesh.maxWidth, whiteSpace: mesh.whiteSpace,
+    sdfGlyphSize: mesh.sdfGlyphSize, sdfExponent: mesh.sdfExponent,
+  };
+  const key = JSON.stringify([params, Boolean(titleBounds), Number.isFinite(yPx)]);
+  let bounds = mesh.userData.graphHeaderInkBounds;
   if (bounds?.key !== key) {
-    bounds = { key, center, correction: 0 };
-    mesh.userData.graphBadgeInkBounds = bounds;
-    getTextRenderInfo({
-      text: mesh.text, font: mesh.font, unicodeFontsURL: mesh.unicodeFontsURL,
-      fontWeight: mesh.fontWeight, fontSize: mesh.fontSize, anchorX: "center",
-      anchorY: "middle", textAlign: "center", lineHeight: mesh.lineHeight,
-      sdfGlyphSize: mesh.sdfGlyphSize, sdfExponent: mesh.sdfExponent,
-    }, ({ visibleBounds }) => {
-      if (mesh.userData.graphBadgeInkBounds !== bounds || !mesh.parent) return;
-      const [left, , right] = visibleBounds;
-      if (!Number.isFinite(left) || !Number.isFinite(right)) return;
-      bounds.correction = (left + right) / 2;
-      mesh.position.x = bounds.center - bounds.correction;
+    bounds = { key, center, clip: titleBounds, dx: 0, dy: 0 };
+    mesh.userData.graphHeaderInkBounds = bounds;
+    getTextRenderInfo(params, ({ visibleBounds }) => {
+      if (mesh.userData.graphHeaderInkBounds !== bounds || !mesh.parent || !mesh.visible) return;
+      const [left, bottom, right, top] = visibleBounds;
+      if (Number.isFinite(left) && Number.isFinite(right)) bounds.dx = bounds.clip ? left : (left + right) / 2;
+      if (Number.isFinite(yPx) && Number.isFinite(bottom) && Number.isFinite(top)) bounds.dy = (bottom + top) / 2;
+      apply(bounds);
     });
   }
   bounds.center = center;
-  mesh.position.x = center - bounds.correction;
+  bounds.clip = titleBounds;
+  apply(bounds);
 }
 
 function createPorts({ THREE, node, ports, side, anchorWidth, anchorHeight, portRadius, getPortColor }) {
@@ -2374,7 +2388,8 @@ function updateCardTexture({
     badge ? { text: badge, mesh: record.textMeshes.statusBadgeText } : null,
   ].filter(Boolean);
   // Leave room for the title and keep the inter-pill gap independent of padding.
-  const badgeWidthBudget = Math.max(1, (width - 36 - CARD_BADGE_RIGHT_INSET_PX - 220 - 64
+  const titleLeft = appearance ? CARD_BADGE_RIGHT_INSET_PX : 36;
+  const badgeWidthBudget = Math.max(1, (width - titleLeft - CARD_BADGE_RIGHT_INSET_PX - 220 - 64
     - badgeLayout.gapPx * Math.max(0, badgeEntries.length - 1)) / Math.max(1, badgeEntries.length));
   const badgeMetrics = badgeEntries.map((entry) => ({
     ...entry,
@@ -2396,7 +2411,7 @@ function updateCardTexture({
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
-  const titleMaxWidth = Math.max(1, width - 72 - (badgeGroupWidth ? badgeGroupWidth + 64 + (CARD_BADGE_RIGHT_INSET_PX - 30) : 48));
+  const titleMaxWidth = Math.max(1, width - titleLeft - 36 - (badgeGroupWidth ? badgeGroupWidth + 64 + (CARD_BADGE_RIGHT_INSET_PX - 30) : 48));
   // Canvas and the actual world font differ slightly. Keep the ellipsis within
   // the visible title area, then clip only any exceptional glyph overhang.
   const titleLines = wrapTextLines(ctx, title, titleMaxWidth * 0.92, 1);
@@ -2417,10 +2432,12 @@ function updateCardTexture({
     right: pxToCardLocalX(record, rightPx),
     bottom: pxToCardLocalY(record, bottomPx),
   });
-  const titleTop = GRAPH_NODE_CARD_TITLE_TOP_PX;
-  const titleBottom = Math.min(headerHeight - 4, titleTop + titleBlockHeight + titleFontSizePx * 0.2);
-  setGraphSceneEditSurface(record.cardMesh, "title",
-    editBounds(36, titleTop, 36 + titleMaxWidth, titleBottom), record.textMeshes.titleText);
+  const headerCenter = headerHeight * 0.5;
+  const titleEditHeight = titleBlockHeight + titleFontSizePx * 0.2;
+  const titleTop = appearance ? Math.max(4, headerCenter - titleEditHeight * 0.5) : GRAPH_NODE_CARD_TITLE_TOP_PX;
+  const titleBottom = Math.min(headerHeight - 4, titleTop + titleEditHeight);
+  const titleBounds = editBounds(titleLeft, titleTop, titleLeft + titleMaxWidth, titleBottom);
+  setGraphSceneEditSurface(record.cardMesh, "title", titleBounds, record.textMeshes.titleText);
   const bodyTop = Math.min(height * 0.85, headerHeight + Math.max(30, Math.round(bodyFontSizePx * 0.55)));
   const bodyBottom = Math.max(bodyTop + 1, bodyStrip
     ? height - stripBottomPaddingPx - Math.max(28, Math.round(stripFontSizePx * 2))
@@ -2439,37 +2456,45 @@ function updateCardTexture({
   ctx.textBaseline = "top";
   setNodeTextMesh(record, record.textMeshes.titleText, {
     text: titleLines.join("\n"),
-    xPx: 36,
-    yPx: GRAPH_NODE_CARD_TITLE_TOP_PX,
+    xPx: titleLeft,
+    yPx: appearance ? headerCenter : GRAPH_NODE_CARD_TITLE_TOP_PX,
     z: 0.032,
     fontSizePx: titleFontSizePx,
     lineGapPx: titleLineGapPx,
     maxWidthPx: titleMaxWidth,
-    color: headerTextColor,
+    color: appearance
+      ? (graphContrastRatio(0x08131d, accent) >= graphContrastRatio(0xffffff, accent) ? 0x08131d : 0xffffff)
+      : headerTextColor,
     fontWeight: "bold",
     textAlign: "left",
     anchorX: "left",
-    anchorY: "top",
-    outlineWidthPx: 6,
+    anchorY: appearance ? "middle" : "top",
+    outlineWidthPx: appearance ? 0 : 6,
     outlineColor: headerTextOutline,
     outlineOpacity: headerTextOutlineOpacity,
   });
   if (record.textMeshes.titleText) {
     record.textMeshes.titleText.whiteSpace = "nowrap";
-    record.textMeshes.titleText.clipRect = [0, -pxToCardWorldSize(record, titleBottom - titleTop),
-      pxToCardLocalX(record, 36 + titleMaxWidth) - pxToCardLocalX(record, 36), 0];
+    if (appearance) {
+      alignCardHeaderInk(record, record.textMeshes.titleText, { xPx: titleLeft, yPx: headerCenter, titleBounds });
+    } else {
+      record.textMeshes.titleText.clipRect = [0, -pxToCardWorldSize(record, titleBottom - titleTop),
+        pxToCardLocalX(record, titleLeft + titleMaxWidth) - pxToCardLocalX(record, titleLeft), 0];
+    }
   }
 
   if (badgeMetrics.length) {
+    const badgeCenterY = appearance ? headerCenter : badgeLayout.centerYPx;
+    const badgeTop = appearance ? badgeCenterY - badgeLayout.heightPx * 0.5 : badgeLayout.topPx;
     let rightEdgeX = width - CARD_BADGE_RIGHT_INSET_PX;
     for (let index = badgeMetrics.length - 1; index >= 0; index -= 1) {
       const entry = badgeMetrics[index];
       const x = rightEdgeX - entry.pillWidth;
-      drawRoundedRect(ctx, x, badgeLayout.topPx, entry.pillWidth, badgeLayout.heightPx, badgeLayout.radiusPx, badgeFillColor);
+      drawRoundedRect(ctx, x, badgeTop, entry.pillWidth, badgeLayout.heightPx, badgeLayout.radiusPx, badgeFillColor);
       setNodeTextMesh(record, entry.mesh, {
         text: entry.text,
         xPx: x + entry.pillWidth * 0.5,
-        yPx: badgeLayout.centerYPx,
+        yPx: badgeCenterY,
         z: 0.034,
         fontSizePx: badgeFontSizePx,
         color: badgeTextColor,
@@ -2480,7 +2505,7 @@ function updateCardTexture({
         anchorX: "center",
         anchorY: "middle",
       });
-      centerCardBadgeInk(record, entry.mesh, x + entry.pillWidth * 0.5);
+      alignCardHeaderInk(record, entry.mesh, { xPx: x + entry.pillWidth * 0.5, yPx: appearance ? badgeCenterY : undefined });
       rightEdgeX = x - badgeLayout.gapPx;
     }
   }
