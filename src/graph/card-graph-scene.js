@@ -2017,7 +2017,10 @@ function resolveCardTextBlockHeightPx(fontSizePx, lineGapPx, lineCount) {
 
 function resolveCardBadgeLayoutPx(fontSizePx) {
   const resolvedFontSizePx = Math.max(1, Number(fontSizePx) || DEFAULT_CARD_BADGE_FONT_SIZE_PX);
-  const sidePaddingPx = Math.max(30, Math.round(resolvedFontSizePx * 0.7));
+  const baseSidePaddingPx = Math.max(30, Math.round(resolvedFontSizePx * 0.7));
+  // Scale the extra breathing room with the badge type, not its text length.
+  const extraSidePaddingPx = Math.max(14, Math.round(resolvedFontSizePx * 0.34));
+  const sidePaddingPx = baseSidePaddingPx + extraSidePaddingPx;
   const verticalPaddingPx = Math.max(10, Math.round(resolvedFontSizePx * 0.28));
   const heightPx = Math.max(DEFAULT_CARD_BADGE_MIN_HEIGHT_PX, Math.round(resolvedFontSizePx + verticalPaddingPx * 2));
   const radiusPx = Math.max(18, Math.round(heightPx * 0.45));
@@ -2025,6 +2028,7 @@ function resolveCardBadgeLayoutPx(fontSizePx) {
   return {
     topPx: DEFAULT_CARD_BADGE_TOP_PX,
     sidePaddingPx,
+    maxWidthPx: 420 + extraSidePaddingPx * 2,
     heightPx,
     radiusPx,
     gapPx,
@@ -2335,10 +2339,14 @@ function updateCardTexture({
     leadingBadge ? { text: leadingBadge, mesh: record.textMeshes.leadingBadgeText } : null,
     badge ? { text: badge, mesh: record.textMeshes.statusBadgeText } : null,
   ].filter(Boolean);
+  // Leave room for the title and keep the inter-pill gap independent of padding.
+  const badgeWidthBudget = Math.max(1, (width - 36 - 30 - 220 - 64
+    - badgeLayout.gapPx * Math.max(0, badgeEntries.length - 1)) / Math.max(1, badgeEntries.length));
   const badgeMetrics = badgeEntries.map((entry) => ({
     ...entry,
     pillWidth: Math.min(
-      420,
+      badgeLayout.maxWidthPx,
+      badgeWidthBudget,
       Math.max(
         DEFAULT_CARD_BADGE_MIN_WIDTH_PX,
         Math.max(
@@ -2354,8 +2362,10 @@ function updateCardTexture({
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
-  const titleMaxWidth = Math.max(220, width - 72 - (badgeGroupWidth ? badgeGroupWidth + Math.max(64, badgeLayout.sidePaddingPx + badgeLayout.gapPx) : 48));
-  const titleLines = wrapTextLines(ctx, title, titleMaxWidth, 1);
+  const titleMaxWidth = Math.max(1, width - 72 - (badgeGroupWidth ? badgeGroupWidth + 64 : 48));
+  // Canvas and the actual world font differ slightly. Keep the ellipsis within
+  // the visible title area, then clip only any exceptional glyph overhang.
+  const titleLines = wrapTextLines(ctx, title, titleMaxWidth * 0.92, 1);
   const titleBlockHeight = resolveCardTextBlockHeightPx(titleFontSizePx, titleLineGapPx, titleLines.length);
   const headerHeight = Math.max(
     cardHeaderHeightPx,
@@ -2410,6 +2420,11 @@ function updateCardTexture({
     outlineColor: headerTextOutline,
     outlineOpacity: headerTextOutlineOpacity,
   });
+  if (record.textMeshes.titleText) {
+    record.textMeshes.titleText.whiteSpace = "nowrap";
+    record.textMeshes.titleText.clipRect = [0, -pxToCardWorldSize(record, titleBottom - titleTop),
+      pxToCardLocalX(record, 36 + titleMaxWidth) - pxToCardLocalX(record, 36), 0];
+  }
 
   if (badgeMetrics.length) {
     let rightEdgeX = width - 30;
