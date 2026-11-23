@@ -31,6 +31,11 @@ import {
   applyGenericNodeHighlight,
 } from "./graph-mesh-builders.js";
 import { defaultHotbarVisuals, projectWorldToHud, applySmartInitialView } from "./graph-view-helpers.js";
+import { createGraphSettingsHotbarItem, installGraphPanelThemeControl, resolveGraphPanelTheme } from "./panel-theme-control.js";
+import { graphPanelTheme } from "./panel-theme.js";
+import { createBusinessIconTextures } from "./business-icons.js";
+import { graphContrastColor } from "./appearance-contrast.js";
+
 
 const GRAPH_HOTBAR_HINT_COLOR = 0x7cd992;
 
@@ -306,8 +311,9 @@ function getDefaultHelpLines() {
   ];
 }
 
-export async function runUniversalNetworkSceneFromJson(json) {
+export async function runUniversalNetworkSceneFromJson(json, {appearanceSettings} = {}) {
   const cfg = compileJsonConfig(json);
+  cfg.appearanceSettings = appearanceSettings ?? json.appearanceSettings;
   return runUniversalNetworkScene(cfg);
 }
 
@@ -319,6 +325,7 @@ export async function runUniversalNetworkSceneFromUrlParams({
   configParam = "config",
   baseUrl = null,
   timeoutMs = 15000,
+  appearanceSettings,
 } = {}) {
   const base = baseUrl || window.location.href;
   const scene = getUrlParam(sceneParam);
@@ -333,7 +340,7 @@ export async function runUniversalNetworkSceneFromUrlParams({
 
   const configUrl = new URL(configPath, base);
   const json = await fetchJsonWithTimeout({ url: configUrl.href, timeoutMs });
-  return runUniversalNetworkSceneFromJson(json);
+  return runUniversalNetworkSceneFromJson(json,{appearanceSettings});
 }
 
 /**
@@ -358,6 +365,21 @@ export async function runUniversalNetworkScene(config) {
   const stagePrefix = config.stagePrefix || "run";
 
   const THREE = config.THREE || THREE_NS;
+  const prefOptions=config.appearanceSettings===true ? {} : config.appearanceSettings || null;
+  const graphHud=config.context?.hud ?? {};
+  const baselineSlots=Number.isInteger(graphHud.hotbarSlotCount)?graphHud.hotbarSlotCount:4;
+  // For default universals keep indexes 0-3, then Settings; if Help/Debug
+  // are reserved, give them their own appended slots rather than stealing 2/3.
+  const settingsIndex=prefOptions && prefOptions.settings!==false ? Math.max(4,baselineSlots) : -1;
+  const slotCount=settingsIndex>=0 ? settingsIndex+1+(graphHud.reserveSystemHotbarSlots===false?0:2) : baselineSlots;
+  const bakedMode=prefOptions ? (prefOptions.preference?.getMode?.() ?? resolveGraphPanelTheme(prefOptions)) : null;
+  const settingsItem=settingsIndex>=0 ? createGraphSettingsHotbarItem({THREE}) : null;
+  const networkIcons=settingsItem ? createBusinessIconTextures(THREE,["connectors","view","refresh","fit"]) : {};
+  const hotbarTooltips=Array.isArray(config.hud?.tooltips)
+    ? [...config.hud.tooltips] : ["Toggle edges","Toggle labels","Reload network","Reset view"];
+  if(settingsItem) hotbarTooltips[settingsIndex]=settingsItem.tooltip;
+  let settingsControl=null;
+
 
   let showEdges = true;
   let showLabels = true;
@@ -380,7 +402,28 @@ export async function runUniversalNetworkScene(config) {
 
   const _tmpV3a = new THREE.Vector3();
 
-  let activePanelTheme = null;
+  let activePanelTheme = graphPanelTheme(bakedMode);
+  const authoredInk = new WeakMap();
+  const adjustMaterial = (material,theme,target,opacity) => {
+    if(!material?.color?.getHex || !material.color.setHex) return null;
+    if(!authoredInk.has(material)) authoredInk.set(material,material.color.getHex());
+    const base=authoredInk.get(material);
+    if(!theme || !prefOptions || prefOptions.networkContrast===false) return base;
+    const background=scene.background?.getHex?.() ?? theme.background;
+    const alpha=Number.isFinite(opacity)?Math.max(0,Math.min(1,opacity)):1;
+    return graphContrastColor(base,background,target,alpha);
+  };
+  const refreshNodeInk=(mesh,theme)=>{
+    for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material]){
+      const next=adjustMaterial(material,theme,3,material?.opacity);
+      if(next!=null) material.color.setHex(next);
+    }
+  };
+  const refreshEdgeInk=(line,theme)=>{
+    const next=adjustMaterial(line.material,theme,2.8,line.userData.baseOpacity);
+    if(next!=null){line.userData.baseColor=next;line.material.color.setHex(next);}
+  };
+
   const explicitLabelColors = new WeakSet();
   const applyLabelTheme = (label, theme) => {
     if (!theme || explicitLabelColors.has(label)) return;
@@ -411,8 +454,10 @@ export async function runUniversalNetworkScene(config) {
       THREE,
       ...(config.context || {}),
       hud: {
-        ...(config?.context?.hud || {}),
-        hotbarTooltips: Array.isArray(config?.hud?.tooltips) ? config.hud.tooltips : undefined,
+        ...graphHud,
+        ...(bakedMode ? {theme:bakedMode} : {}),
+        ...(settingsItem ? {hotbarSlotCount:slotCount} : {}),
+        hotbarTooltips:settingsItem ? hotbarTooltips : Array.isArray(config?.hud?.tooltips) ? config.hud.tooltips : undefined,
         onHotbarSlot: (ev) => handleHotbarSlot(ev),
       },
     },
@@ -485,6 +530,15 @@ export async function runUniversalNetworkScene(config) {
   });
 
   const { renderer, scene, camera, rig, navigation, hudSystem, getWorldControlsEnabled } = ctx;
+
+  if(prefOptions){
+    settingsControl=installGraphPanelThemeControl(ctx,prefOptions);
+    ctx.appearanceSettings=settingsControl;
+  }
+  if(settingsItem) ctx.onDispose?.(()=>{
+    settingsItem.iconTexture?.dispose?.();
+    for(const texture of Object.values(networkIcons)) texture?.dispose?.();
+  });
 
   // Wire desktop hover tracking for outlines.
   renderer.domElement.addEventListener(
@@ -571,6 +625,20 @@ export async function runUniversalNetworkScene(config) {
     },
   });
 
+  const syncGraphAppearance=theme=>{
+    activePanelTheme=theme;
+    for(const label of labelSprites) applyLabelTheme(label,theme);
+    if(!prefOptions) return;
+    for(const mesh of nodeMeshes) refreshNodeInk(mesh,theme);
+    for(const line of edgeLines) refreshEdgeInk(line,theme);
+    pulseEffect.setEdgeEmphasis(edgeLines,{
+      dimOpacity:config?.pulse?.dimOpacity,brightOpacity:config?.pulse?.brightOpacity,force:true,
+    });
+  };
+  const detachAppearance=ctx.onPanelThemeChange?.(syncGraphAppearance);
+  ctx.onDispose?.(()=>detachAppearance?.());
+  syncGraphAppearance(graphPanelTheme(ctx.panelTheme));
+
   function clearNetwork() {
     graph = null;
     derived = null;
@@ -611,7 +679,23 @@ export async function runUniversalNetworkScene(config) {
   }
 
   function updateHotbarVisuals() {
-    defaultHotbarVisuals(hudSystem, [showEdges, showLabels, false, false]);
+    if(!settingsItem || typeof hudSystem.setHotbarItems!=="function"){
+      defaultHotbarVisuals(hudSystem,[showEdges,showLabels,false,false]);
+      return;
+    }
+    const items=[...(hudSystem.hud?.ui?.data?.hotbarItems ?? new Array(slotCount))];
+    const specs=[
+      [networkIcons.connectors,"EDGE",showEdges],
+      [networkIcons.view,"LABEL",showLabels],
+      [networkIcons.refresh,"LOAD",false],
+      [networkIcons.fit,"FIT",false],
+    ];
+    for(const [index,[iconTexture,shortLabel,active]] of specs.entries()){
+      items[index]={...items[index],systemSlot:false,showNumber:false,tooltip:hotbarTooltips[index],
+        iconTexture,iconText:shortLabel,shortLabel,active};
+    }
+    items[settingsIndex]={...settingsItem,systemSlot:false,showNumber:false};
+    hudSystem.setHotbarItems(items);
   }
 
   function setSelected(nodeId) {
@@ -771,6 +855,7 @@ export async function runUniversalNetworkScene(config) {
       mesh.position.copy(pos);
       mesh.userData.id = id;
       mesh.userData.node = node;
+      if(prefOptions) refreshNodeInk(mesh,activePanelTheme);
 
       nodeMeshes.push(mesh);
       nodeById.set(id, mesh);
@@ -816,6 +901,8 @@ export async function runUniversalNetworkScene(config) {
       if (line.userData.baseOpacity == null && line.material?.opacity != null) line.userData.baseOpacity = line.material.opacity;
       if (line.userData.baseColor == null && line.material?.color?.getHex) line.userData.baseColor = line.material.color.getHex();
 
+      if(prefOptions) refreshEdgeInk(line,activePanelTheme);
+
       // Pulse policy is config-driven.
       line.userData.pulseable = typeof config?.pulse?.isEdgePulseable === "function" ? !!config.pulse.isEdgePulseable(e) : true;
 
@@ -849,6 +936,7 @@ export async function runUniversalNetworkScene(config) {
 
   async function handleHotbarSlot(ev) {
     const idx = Number(ev?.index);
+    if (settingsIndex>=0 && idx===settingsIndex) {settingsControl?.toggleSettings();return;}
     if (idx === 0) {
       showEdges = !showEdges;
       applyToggles();

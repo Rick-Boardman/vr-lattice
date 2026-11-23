@@ -301,6 +301,7 @@ export function createGraphSceneContext({
   if (applyStandardLayout) applyStandardGraphHudLayout(hudSystem);
 
   const unwireResize = wireDesktopResize({ renderer, camera: cameraObj, hudSystem });
+  const disposeListeners = new Set();
   const unbindAppearance = bindGraphSceneAppearance(sceneObj, () => panelTheme?.mode ?? null, (listener) => {
     pendingThemeListeners.add(listener);
     return () => pendingThemeListeners.delete(listener);
@@ -337,7 +338,16 @@ export function createGraphSceneContext({
     controllers: hudSystem.controllers,
     setWorldControlsEnabled,
     getWorldControlsEnabled,
+    onDispose(listener) {
+      if (typeof listener!=="function") return ()=>{};
+      disposeListeners.add(listener);
+      return ()=>disposeListeners.delete(listener);
+    },
     dispose: () => {
+      for (const listener of [...disposeListeners]) {
+        try { listener(); } catch { /* independent cleanup */ }
+      }
+      disposeListeners.clear();
       try {
         unwireResize?.();
         unbindAppearance();

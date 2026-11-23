@@ -1,99 +1,88 @@
 // SPDX-License-Identifier: Apache-2.0
+import {
+  createHudAppearancePreference,
+  resolveHudAppearancePreference,
+  installHudAppearanceSettings,
+  createHudAppearanceSettingsHotbarItem,
+} from "@rb/halo/src/hud-appearance.js";
 
-const WINDOW_KEY = "lattice-panel-appearance";
 const installed = new WeakMap();
+const DEFAULT_STORAGE_KEY = "lattice:panel-theme";
+const DEFAULT_WINDOW_KEY = "lattice-settings";
+const isMode = value => value === "light" || value === "dark";
 
-function isMode(value) {
-  return value === "light" || value === "dark";
+function preferenceOptions({storageKey=DEFAULT_STORAGE_KEY,legacyStorageKeys,initialMode,platform=globalThis}={}) {
+  return {storageKey,legacyStorageKeys,initialMode,platform};
 }
 
-/** Resolve a host override, stored preference, or system mode without writing state. */
-export function resolveGraphPanelTheme({ storageKey = "lattice:panel-theme", initialMode, platform = globalThis } = {}) {
-  if (isMode(initialMode)) return initialMode;
-  let saved;
-  try { saved = platform.localStorage?.getItem(storageKey); } catch { /* private embed */ }
-  if (isMode(saved)) return saved;
-  return platform.matchMedia?.("(prefers-color-scheme: light)")?.matches ? "light" : "dark";
+/** Resolve effective color before boot without starting subscriptions or a HUD window. */
+export function resolveGraphPanelTheme(options = {}) {
+  return resolveHudAppearancePreference(preferenceOptions(options)).mode;
+}
+
+/** Standard Settings item for app hotbar slots; callers own the icon's lifecycle. */
+export function createGraphSettingsHotbarItem(options) {
+  return createHudAppearanceSettingsHotbarItem(options);
 }
 
 /**
- * Add a Halo-native, desktop and XR accessible appearance selector to a graph scene.
- * An explicit host mode takes precedence on startup. Otherwise restore the user's
- * choice or follow their system appearance until they choose Light or Dark.
+ * Install one graph-scene preference binding. Retains the old installer name and
+ * explicit setTheme() bridge. Settings is closable and remains hidden until opened.
  */
-export function installGraphPanelThemeControl(ctx, {
-  storageKey = "lattice:panel-theme",
-  initialMode,
-  windowKey = WINDOW_KEY,
-  x = 12,
-  y = 72,
-  platform = globalThis,
-} = {}) {
+export function installGraphPanelThemeControl(ctx, options = {}) {
   const hud = ctx?.hudSystem;
-  if (typeof ctx?.setPanelTheme !== "function" ||
-      typeof hud?.createWindow !== "function" ||
-      typeof hud?.setWindowLines !== "function") return null;
+  if (typeof ctx?.setPanelTheme!=="function" || typeof hud?.createWindow!=="function" ||
+      typeof hud?.setWindowLines!=="function") return null;
   if (installed.has(ctx)) return installed.get(ctx);
-
-  let saved;
-  try { saved = platform.localStorage?.getItem(storageKey); } catch { /* private embed */ }
-  const system = platform.matchMedia?.("(prefers-color-scheme: light)");
-  let explicit = isMode(initialMode) || isMode(saved);
-  let current = isMode(initialMode) ? initialMode : isMode(saved) ? saved : system?.matches ? "light" : "dark";
+  const {windowKey=DEFAULT_WINDOW_KEY,title="Settings",x,y,settings=true,keyboardShortcutTarget,platform=globalThis,preference:external}=options;
+  const pref = external ?? createHudAppearancePreference(preferenceOptions(options));
+  let current;
   let disposed = false;
-
-  hud.createWindow(windowKey, {
-    title: "APPEARANCE",
-    x, y, w: 236, h: 112,
-    closeable: false,
-    resizable: false,
-    scrollable: false,
-  });
-
-  function render() {
-    hud.setWindowLines(windowKey, ["light", "dark"].map(mode => {
-      const label = mode === "light" ? "Light" : "Dark";
-      return {
-        text: label,
-        actionButtonText: current === mode ? "Active" : "Use",
-        actionButtonWidthPx: 80,
-        actionButtonTextColor: 0xf4f8ff,
-        actionButtonBgColor: current === mode ? 0x3c5269 : 0x245e96,
-        actionButtonBgOpacity: 1,
-        actionButtonHoverText: `Use ${label.toLowerCase()} panels`,
-        actionButtonOnClick: () => setTheme(mode, { persist: true }),
-      };
-    }));
-  }
-
-  function setTheme(mode, { persist = false } = {}) {
+  const apply = mode => {
     if (disposed || !isMode(mode)) return false;
-    if (persist) {
-      explicit = true;
-      try { platform.localStorage?.setItem(storageKey, mode); } catch { /* private embed */ }
+    if (current!==mode || ("panelTheme" in ctx && ctx.panelTheme!==mode)) {
+      current=mode;
+      ctx.setPanelTheme(mode);
     }
-    current = mode;
-    ctx.setPanelTheme(mode);
-    render();
     return true;
-  }
-
-  function onSystemChange(event) {
-    if (!explicit) setTheme(event.matches ? "light" : "dark");
-  }
-  system?.addEventListener?.("change", onSystemChange);
-  const control = {
-    get mode() { return current; },
-    setTheme,
+  };
+  const unsubscribe=pref.subscribe(({mode})=>apply(mode));
+  const frame={};
+  if(Number.isFinite(x)) frame.x=x;
+  if(Number.isFinite(y)) frame.y=y;
+  const panel=settings===false ? null : installHudAppearanceSettings(hud,{
+    preference:pref,windowKey,title,platform,frame,keyboardShortcutTarget,
+  });
+  let detachDispose;
+  const control={
+    get mode(){return current;},
+    get preference(){return pref.getPreference();},
+    get settingsOpen(){return panel?.isOpen() ?? false;},
+    openSettings:options=>panel?.open(options) ?? false,
+    closeSettings:options=>panel?.close(options) ?? false,
+    toggleSettings:options=>panel?.toggle(options) ?? false,
+    setPreference(next) {
+      if(disposed || !["system","light","dark"].includes(next)) return false;
+      pref.setPreference(next);
+      apply(pref.getMode());
+      return true;
+    },
+    setTheme(mode,{persist=false}={}) {
+      if(disposed || (!isMode(mode) && mode!=="system")) return false;
+      return persist || mode==="system" ? control.setPreference(mode) : apply(mode);
+    },
     dispose() {
-      if (disposed) return;
-      disposed = true;
-      system?.removeEventListener?.("change", onSystemChange);
-      hud.destroyWindow?.(windowKey);
+      if(disposed) return;
+      disposed=true;
+      detachDispose?.();
+      unsubscribe?.();
+      panel?.dispose();
+      if(!external) pref.dispose();
       installed.delete(ctx);
     },
   };
-  installed.set(ctx, control);
-  setTheme(current);
+  installed.set(ctx,control);
+  detachDispose=ctx.onDispose?.(control.dispose);
+  apply(pref.getMode());
   return control;
 }

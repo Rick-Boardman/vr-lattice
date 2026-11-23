@@ -128,9 +128,10 @@ export function createNetworkPulseEffect({
     {
       dimOpacity = NETWORK_PULSE_DEFAULTS.dimOpacity,
       brightOpacity = NETWORK_PULSE_DEFAULTS.brightOpacity,
+      force = false,
     } = {}
   ) {
-    if (activeNodeId === lastEmphasisNodeId) return;
+    if (!force && activeNodeId === lastEmphasisNodeId) return;
     lastEmphasisNodeId = activeNodeId;
 
     const hasActive = !!activeNodeId;

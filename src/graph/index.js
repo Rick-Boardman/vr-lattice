@@ -199,7 +199,7 @@ export {
 export { BUSINESS_ICON_PATHS, createBusinessIconTextures } from "./business-icons.js";
 
 export { GRAPH_PANEL_THEMES, graphPanelTheme, installGraphPanelTheme } from "./panel-theme.js";
-export { installGraphPanelThemeControl, resolveGraphPanelTheme } from "./panel-theme-control.js";
+export { installGraphPanelThemeControl, resolveGraphPanelTheme, createGraphSettingsHotbarItem } from "./panel-theme-control.js";
 
 export { createInlineSceneEditor, createSceneEditGesture, pickGraphDesktopTextField, pickGraphSavedBodyScroll, attachGraphSavedBodyInput } from "./desktop-scene-interaction.js";
 export { createGraphAuthoringAdapter, createPassiveGraphInspector, resolveGraphInspectorFrame } from "./authoring-adapter.js";
