@@ -19,7 +19,7 @@ import { clamp, lerp } from "@rb/halo/src/scalar-math.js";
  * @param {number} [options.pulseMinScale=1.105] Minimum pulse scale applied during animation.
  * @param {number} [options.pulseMaxScale=1.6] Maximum pulse scale applied during animation.
  * @param {(line: unknown) => boolean} [options.isEdgePulseable=null] Optional predicate used to exclude specific edge lines from pulse emission.
- * @returns {{ group: unknown, clear: () => void, dispose: () => void, setActiveNode: (nodeId: string | null, atS: number) => void, rebuild: (edgeLines: Array<unknown>) => void, setEdgeEmphasis: (edgeLines: Array<unknown>, options?: { dimOpacity?: number, brightOpacity?: number }) => void, update: (tS: number, nodeById: Map<string, { position: unknown }>, edgeLines: Array<unknown>, options?: { speed?: number }) => void }} Pulse effect controller with lifecycle, emphasis, and per-frame update hooks.
+ * @returns {{ group: unknown, setTheme: (theme: string | null) => void, clear: () => void, dispose: () => void, setActiveNode: (nodeId: string | null, atS: number) => void, rebuild: (edgeLines: Array<unknown>) => void, setEdgeEmphasis: (edgeLines: Array<unknown>, options?: { dimOpacity?: number, brightOpacity?: number }) => void, update: (tS: number, nodeById: Map<string, { position: unknown }>, edgeLines: Array<unknown>, options?: { speed?: number }) => void }} Pulse effect controller with lifecycle, emphasis, and per-frame update hooks.
  * Side effects: allocates Three.js geometry/material/mesh objects, adds and removes a group from the supplied parent, mutates edge line material colors/opacities, and mutates pulse mesh visibility/position/scale during updates.
  */
 export function createNetworkPulseEffect({
@@ -54,6 +54,16 @@ export function createNetworkPulseEffect({
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
+
+  // Additive light clips against the pale world. Apply a darker value of
+  // the same linear RGB hue with ordinary compositing only in Light mode.
+  // Keep Dark (including unthemed consumers) identical to the original glow.
+  function setTheme(theme) {
+    const light = theme === "light";
+    pulseMat.color.setHex(color);
+    if (light) pulseMat.color.multiplyScalar(0.18);
+    pulseMat.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
+  }
 
   const pulseMeshes = [];
   for (let i = 0; i < maxPulses; i++) {
@@ -243,6 +253,7 @@ export function createNetworkPulseEffect({
 
   return {
     group,
+    setTheme,
     clear,
     dispose,
     setActiveNode,

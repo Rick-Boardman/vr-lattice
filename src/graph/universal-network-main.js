@@ -654,6 +654,7 @@ export async function runUniversalNetworkScene(config) {
     activePanelTheme=theme;
     for(const label of labelSprites) applyLabelTheme(label,theme);
     if(!prefOptions) return;
+    pulseEffect.setTheme(theme);
     for(const mesh of nodeMeshes) refreshNodeInk(mesh,theme);
     for(const line of edgeLines) refreshEdgeInk(line,theme);
     pulseEffect.setEdgeEmphasis(edgeLines,{
