@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createGraphSceneContext, toCanonicalGraph } from "../../src/graph/index.js";
+import { createGraphSceneContext, resolveGraphPanelTheme, toCanonicalGraph } from "../../src/graph/index.js";
 import { buildNodeMeshFromSpec, buildEdgeLineFromSpec, createBillboardTextLabel, setGraphTroikaText } from "../../src/graph/graph-mesh-builders.js";
 import { renderHudFrame, startAnimationLoop } from "@rb/halo";
 import { wireSceneSelection } from "@rb/halo/src/navigation/scene-selection.js";
@@ -13,9 +13,11 @@ const graph = toCanonicalGraph({
   ],
   edges: [{ from: "input", to: "transform", kind: "flow" }, { from: "transform", to: "output", kind: "flow" }],
 });
+const appearance = { storageKey: "lattice:example:appearance" };
 const ctx = createGraphSceneContext({
   THREE, canvas: document.getElementById("c"),
   hud: {
+    theme: resolveGraphPanelTheme(appearance),
     uiPreset: "minimal", visibleWindowKeys: ["hotbar"],
     ensureHelpWindow: false, ensureSelectionWindow: false,
     applyStandardLayout: false, hideDemoWindows: false,
@@ -39,18 +41,35 @@ for (const node of graph.nodes) {
   ctx.scene.add(label);
   labels.push(label);
 }
-for (const edge of graph.edges) ctx.scene.add(buildEdgeLineFromSpec({ THREE, edge, fromPos: positions.get(edge.from), toPos: positions.get(edge.to), spec: { defaultColor: 0xcbd5e1 } }));
+const edgeMeshes = graph.edges.map(edge => buildEdgeLineFromSpec({ THREE, edge, fromPos: positions.get(edge.from), toPos: positions.get(edge.to), spec: { defaultColor: 0xcbd5e1 } }));
+ctx.scene.add(...edgeMeshes);
+
+const repaintLabels = (theme) => {
+  for (const edge of edgeMeshes) edge.material.color.setHex(theme.key === "light" ? 0x567292 : 0xcbd5e1);
+  for (const label of labels) label.userData.textMesh.color = theme.labelColor;
+};
+repaintLabels(ctx.setPanelTheme(ctx.panelTheme));
+ctx.onPanelThemeChange(repaintLabels);
 
 const panelOptions = { minW: 120, minH: 60, draggable: false, resizable: false, minimizable: false, closeable: false };
 hudSystem.createWindow("example", { ...panelOptions, title: "LATTICE / SAMPLE FLOW", w: 280, h: 110 });
 hudSystem.setWindowLines("example", [{ text: "3 nodes / 2 connections" }, { text: "Click a node to inspect it." }]);
 hudSystem.createWindow("help", { ...panelOptions, title: "HELP / NAVIGATION", w: 300, h: 290, minimizable: true, scrollable: true });
+function renderExampleHelp() {
+const target = ctx.panelTheme === "light" ? "dark" : "light";
 hudSystem.setHelpOverrideLines([
+  { text: `Appearance: ${ctx.panelTheme}`, actionButtonText: `Use ${target}`, actionButtonWidthPx: 98, actionButtonBgColor: 0x245e96, actionButtonBgOpacity: 1, actionButtonOnClick: () => {
+    ctx.setPanelTheme(target);
+    try { localStorage.setItem(appearance.storageKey, target); } catch { /* optional preference */ }
+  } },
   { text: "Left drag: look around" }, { text: "Click / tap: select a node" },
   { text: "W A S D: move / strafe" }, { text: "T / G: move up / down" },
   { text: "Q / E: turn, R / F: tilt" }, { text: "Z / C: roll, Shift: faster" },
   { text: "Touch: drag to look" }, { text: "FIT: frame the graph" }, { text: "RESET: restore front view" },
 ]);
+}
+renderExampleHelp();
+ctx.onPanelThemeChange(renderExampleHelp);
 hudSystem.createWindow("selection", { ...panelOptions, title: "SELECTED NODE", w: 280, h: 150, scrollable: true, closeable: true, onClose: () => selectNode(null) });
 hudSystem.setWindowHidden("selection", true);
 hudSystem.setHotbarItems([

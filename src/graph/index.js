@@ -196,3 +196,6 @@ export {
   resolveBusinessHotbarStatusColor,
 } from "./business-board.js";
 export { BUSINESS_ICON_PATHS, createBusinessIconTextures } from "./business-icons.js";
+
+export { GRAPH_PANEL_THEMES, graphPanelTheme, installGraphPanelTheme } from "./panel-theme.js";
+export { installGraphPanelThemeControl, resolveGraphPanelTheme } from "./panel-theme-control.js";

@@ -8,7 +8,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
 const {server,origin}=await serve(root);
 const browser=await chromium.launch({args:["--use-gl=angle","--use-angle=swiftshader","--enable-unsafe-swiftshader"]});
 try{
- const page=await browser.newPage({viewport:{width:1280,height:800}});const errors=[];
+ const page=await browser.newPage({viewport:{width:1280,height:800},colorScheme:"dark"});const errors=[];
  page.on("pageerror",e=>errors.push(e.message));
  page.on("response",r=>{if(r.status()>=400)errors.push(r.status()+" "+new URL(r.url()).pathname);});
  await page.goto(origin+"/examples/graph/");
@@ -59,6 +59,27 @@ try{
  assert(await page.evaluate(()=>globalThis.__latticeExample.ctx.hudSystem.hud.ui.data.selectionLines.some(l=>l.text==="1 incoming / 1 outgoing")));
  checkLayout(state,"selected node");
  await page.screenshot({path:path.join(root,"dist/shots/graph-selected.png")});
+ await page.screenshot({path:path.join(root,"dist/shots/graph-dark.png")});
+ const switching = await page.evaluate(() => {
+  const {ctx}=globalThis.__latticeExample, {hud}=ctx.hudSystem;
+  const win=hud.ui.windows.selection;
+  const position=()=>[win.x,win.y,win.w,win.h,win.scrollTop,win.collapsed];
+  const before=position(); const order=[...hud.ui.order];
+  const darkTitle=win.titleBarColor;
+  ctx.setPanelTheme("light");
+  return {before,after:position(),order,afterOrder:[...hud.ui.order],same:hud.ui.windows.selection===win,
+   darkTitle,lightTitle:win.titleBarColor,scene:ctx.scene.background.getHex(),fog:ctx.scene.fog.color.getHex()};
+ });
+ assert(switching.same);
+ assert.deepEqual(switching.before,switching.after);
+ assert.deepEqual(switching.order,switching.afterOrder);
+ assert.notEqual(switching.darkTitle,switching.lightTitle);
+ assert.equal(switching.scene,0xe7edf5);
+ assert.equal(switching.fog,0xe7edf5);
+ assert.equal((await snapshot()).selected,"transform");
+ await page.waitForTimeout(350);
+ await page.screenshot({path:path.join(root,"dist/shots/graph-light.png")});
+ await page.evaluate(()=>globalThis.__latticeExample.ctx.setPanelTheme("dark"));
  // A drag must rotate without acting as a click that changes selection.
  await page.mouse.move(650,550);await page.mouse.down();await page.mouse.move(710,575,{steps:4});await page.mouse.up();
  assert.equal((await snapshot()).selected,"transform");

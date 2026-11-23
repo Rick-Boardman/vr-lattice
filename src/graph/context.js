@@ -6,6 +6,7 @@ import {
 import { DEFAULT_SCENE_RIG_PITCH_CLAMP_EPSILON_RAD } from "@rb/halo/src/rig.js";
 import { clamp } from "@rb/halo/src/scalar-math.js";
 
+import { graphPanelTheme, installGraphPanelTheme } from "./panel-theme.js";
 import { configureXrSafeRenderer, wireDesktopResize } from "./boot.js";
 import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWindows } from "./hud-layout.js";
 
@@ -51,7 +52,7 @@ import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWind
  * @param {number} [options.hud.hotbarSlotCount=4] Hotbar slot count forwarded to the HUD system.
  * @param {Array<unknown> | null} [options.hud.hotbarTooltips=null] Optional hotbar tooltip lines.
  * @param {boolean} [options.hud.reserveSystemHotbarSlots=true] Whether the shared debug/help hotbar tail stays reserved.
- * @param {string | object} [options.hud.theme] HUD window theme preset name or override bag ("professional" when left out).
+ * @param {string | object} [options.hud.theme] HUD window theme preset name or override bag ("professional" when left out); "light"/"dark" also style the default scene.
  * @param {string} [options.hud.uiPreset="default"] HUD window preset string forwarded to the shared HUD bootstrap.
  * @param {Array<string> | null} [options.hud.visibleWindowKeys=null] Optional list of shared Halo panel keys that should exist for this graph scene.
  * @param {Array<string> | null} [options.hud.hiddenWindowKeys=null] Optional list of shared Halo panel keys that should start hidden.
@@ -86,9 +87,9 @@ export function createGraphSceneContext({
   } = {},
 
   scene: {
-    background = 0x0a0e27,
+    background,
     fog = true,
-    fogColor = 0x0a0e27,
+    fogColor,
     fogNear = 55,
     fogFar = 260,
   } = {},
@@ -155,9 +156,10 @@ export function createGraphSceneContext({
 
   let desktopPixelRatio = 1;
 
+  const initialTheme = graphPanelTheme(hudTheme);
   const sceneObj = new THREE.Scene();
-  sceneObj.background = new THREE.Color(background);
-  sceneObj.fog = fog ? new THREE.Fog(fogColor, fogNear, fogFar) : null;
+  sceneObj.background = new THREE.Color(background ?? initialTheme?.background ?? 0x0a0e27);
+  sceneObj.fog = fog ? new THREE.Fog(fogColor ?? initialTheme?.background ?? 0x0a0e27, fogNear, fogFar) : null;
 
   const cameraObj = new THREE.PerspectiveCamera(
     fov,
@@ -225,7 +227,7 @@ export function createGraphSceneContext({
       windowClampMode,
       hotbarSlotCount,
       hotbarTooltips: Array.isArray(hotbarTooltips) ? hotbarTooltips : undefined,
-      theme: hudTheme,
+      theme: initialTheme ? { ...initialTheme, key: "business" } : hudTheme,
       reserveSystemHotbarSlots,
       uiPreset,
       visibleWindowKeys: Array.isArray(visibleWindowKeys) ? visibleWindowKeys : undefined,
@@ -273,6 +275,21 @@ export function createGraphSceneContext({
     sceneObj.add(d);
   }
 
+  const pendingThemeListeners = new Set();
+  let panelTheme;
+  function setPanelTheme(mode) {
+    if (!panelTheme) {
+      panelTheme = installGraphPanelTheme(hudSystem);
+      panelTheme.subscribe((theme) => {
+        if (background == null) sceneObj.background?.setHex?.(theme.background);
+        if (fogColor == null) sceneObj.fog?.color?.setHex?.(theme.background);
+        for (const notify of pendingThemeListeners) notify(theme);
+      });
+    }
+    return panelTheme.setTheme(mode);
+  }
+  if (initialTheme) setPanelTheme(initialTheme.key);
+
   if (hideDemoWindows) hideDefaultDemoWindows(hudSystem);
   // Create help + selection windows before layout (they may not exist in the default HUD).
   ensureGraphHudWindows(hudSystem, {
@@ -301,12 +318,24 @@ export function createGraphSceneContext({
     },
     navigation,
     hudSystem,
+    setPanelTheme,
+    get panelTheme() { return panelTheme?.mode ?? null; },
+    onPanelThemeChange: (listener) => {
+      if (!panelTheme) {
+        // Registry is initialized on first explicit mode, not for legacy contexts.
+        pendingThemeListeners.add(listener);
+        return () => pendingThemeListeners.delete(listener);
+      }
+      return panelTheme.subscribe(listener);
+    },
     controllers: hudSystem.controllers,
     setWorldControlsEnabled,
     getWorldControlsEnabled,
     dispose: () => {
       try {
         unwireResize?.();
+        panelTheme?.dispose();
+        pendingThemeListeners.clear();
       } catch {
         // no-op
       }

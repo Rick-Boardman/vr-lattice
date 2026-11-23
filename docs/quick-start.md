@@ -78,3 +78,23 @@ exports and option documentation rather than inventing APIs. Reuse shared
 runtime and graph primitives, keep application policy in the application,
 and report the checks you actually ran. Public hosted URLs may track a moving
 release; use a tagged package for reproducible applications.
+
+## Light and dark graph appearance
+
+Pass `hud: { theme: "light" }` or `hud: { theme: "dark" }` when creating a
+graph context. Switch an existing scene with `ctx.setPanelTheme("dark")`;
+`ctx.panelTheme` returns the mode and `ctx.onPanelThemeChange(callback)`
+returns an unsubscribe function. Existing panel geometry and content state
+are retained. Native modes change the default background/fog and default
+universal-network labels; explicit scene and label overrides are respected.
+Window color overrides and textured skins are preserved. Use
+`panelTheme: false` in a window's options to opt it out entirely. Light mode
+uses a pale frame over a dark inset content surface for contrast with Halo's
+bright list text. Existing custom and legacy theme selections are unchanged
+unless the host explicitly switches to a native mode.
+
+Use `resolveGraphPanelTheme({ storageKey })` for initial preference resolution
+and `installGraphPanelThemeControl(ctx, { storageKey })` for the optional
+native Appearance panel. Without an explicit host mode, the control restores
+the saved choice or follows system light/dark preference until the user
+chooses a mode. Call the control's `dispose()` when removing it.
