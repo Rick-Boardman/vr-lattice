@@ -133,6 +133,7 @@ const DEFAULT_CARD_BADGE_TOP_PX = 24;
 const DEFAULT_CARD_BADGE_HORIZONTAL_GAP_PX = 14;
 const CARD_BADGE_RIGHT_INSET_PX = 48;
 const CARD_BADGE_TRAILING_COMFORT_PX = 4;
+const CARD_TITLE_BADGE_GAP_PX = 28;
 const DEFAULT_CARD_BADGE_MIN_HEIGHT_PX = 54;
 const DEFAULT_CARD_BADGE_MIN_WIDTH_PX = 120;
 const DEFAULT_CARD_BODY_STRIP_FONT_SIZE_PX = 22;
@@ -2144,6 +2145,92 @@ function alignCardHeaderInk(record, mesh, { xPx, yPx, titleBounds = null } = {})
   apply(bounds);
 }
 
+// The authored string is independent of its one-line scene representation.
+const cardHeaderGraphemes = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+const normalizeCardHeaderLine = value => String(value ?? "").trim().replace(/\s+/g, " ");
+
+function nativeCardHeaderInkWidth(record, mesh, text, fontSizePx, rasterFont) {
+  if (!text) return Promise.resolve(0);
+  if (!(mesh instanceof TroikaText)) {
+    const ctx = record.canvas.getContext("2d");
+    ctx.save();
+    ctx.font = rasterFont;
+    const metrics = ctx.measureText(text);
+    ctx.restore();
+    return Promise.resolve(metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight || metrics.width);
+  }
+  return new Promise(resolve => getTextRenderInfo({
+    text, font: mesh.font, unicodeFontsURL: mesh.unicodeFontsURL, fontWeight: "bold",
+    fontSize: pxToCardWorldSize(record, fontSizePx), anchorX: "left", anchorY: "middle",
+    whiteSpace: "nowrap", sdfGlyphSize: mesh.sdfGlyphSize, sdfExponent: mesh.sdfExponent,
+  }, ({ visibleBounds, blockBounds }) => {
+    const box = visibleBounds?.every(Number.isFinite) ? visibleBounds : blockBounds;
+    const ratio = record.canvas.width / (2 * record.shapeHalfWidth);
+    resolve(Math.max(0, (box?.[2] - box?.[0]) * ratio || 0));
+  }));
+}
+
+async function fitMeasuredCardHeaderLine(value, limit, measure, fullWidth) {
+  if (!value || limit <= 0) return { text: "", width: 0 };
+  const entire = fullWidth ?? await measure(value);
+  if (entire <= limit) return { text: value, width: entire };
+  const ellipsis = "..."; // The bundled graph font always has the period glyph.
+  let best = { text: ellipsis, width: await measure(ellipsis) };
+  if (best.width > limit) return { text: "", width: 0 };
+  const chars = cardHeaderGraphemes
+    ? Array.from(cardHeaderGraphemes.segment(value), ({ segment }) => segment) : Array.from(value);
+  let left = 1;
+  let right = chars.length - 1;
+  while (left <= right) {
+    const length = (left + right) >> 1;
+    const text = chars.slice(0, length).join("").trimEnd() + ellipsis;
+    const width = await measure(text);
+    if (width <= limit) {
+      best = { text, width };
+      left = length + 1;
+    } else right = length - 1;
+  }
+  return best;
+}
+
+async function computeNativeCardHeader(record, config) {
+  const { title, titleFont, titleFontSizePx, badgeEntries, badgeFont, badgeFontSizePx, badgeLayout, width, titleLeft } = config;
+  const normalizedTitle = normalizeCardHeaderLine(title);
+  const normalizedBadges = badgeEntries.map(entry => normalizeCardHeaderLine(entry.text));
+  // Account for the optical left shift and the visible Troika outline as well
+  // as the base padding. Narrow cards shorten text instead of stealing this inset.
+  const padding = badgeLayout.sidePaddingPx + CARD_BADGE_TRAILING_COMFORT_PX + badgeFontSizePx * 0.035 + 1;
+  const measureTitle = value => nativeCardHeaderInkWidth(record, record.textMeshes.titleText, value, titleFontSizePx, titleFont);
+  const measureBadge = (index, value) => nativeCardHeaderInkWidth(record, badgeEntries[index].mesh, value, badgeFontSizePx, badgeFont);
+  const count = badgeEntries.length;
+  const natural = await Promise.all(normalizedBadges.map((label, i) => measureBadge(i, label)));
+  const gap = count ? CARD_TITLE_BADGE_GAP_PX : 0;
+  const innerWidth = width - titleLeft - CARD_BADGE_RIGHT_INSET_PX;
+  const groupBudget = Math.max(0, innerWidth - gap - Math.max(titleFontSizePx * 2, padding)
+    - badgeLayout.gapPx * Math.max(0, count - 1));
+  const demand = natural.map(ink => Math.max(DEFAULT_CARD_BADGE_MIN_WIDTH_PX, ink + padding * 2));
+  // Give smaller pills their natural width first; spillover is shared only by
+  // labels that genuinely compete for the remaining header space.
+  const allocation = [];
+  let remaining = groupBudget;
+  const shortestFirst = demand.map((size, i) => [size, i]).sort((a, b) => a[0] - b[0]);
+  for (let j = 0; j < count; j += 1) {
+    const [size, i] = shortestFirst[j];
+    allocation[i] = Math.min(size, remaining / (count - j));
+    remaining -= allocation[i];
+  }
+  const badges = await Promise.all(normalizedBadges.map(async (label, i) => {
+    const pillWidth = allocation[i];
+    const fitted = await fitMeasuredCardHeaderLine(label, pillWidth - padding * 2, value => measureBadge(i, value), natural[i]);
+    return { text: fitted.text, pillWidth };
+  }));
+  const badgeGroup = badges.reduce((sum, entry) => sum + entry.pillWidth, 0)
+    + badgeLayout.gapPx * Math.max(0, count - 1);
+  const titleWidth = Math.max(1, innerWidth - gap - badgeGroup);
+  const fittedTitle = await fitMeasuredCardHeaderLine(normalizedTitle, titleWidth - 1, measureTitle);
+  return { title: fittedTitle.text, titleWidth, badges };
+}
+
 function createPorts({ THREE, node, ports, side, anchorWidth, anchorHeight, portRadius, getPortColor }) {
   const list = Array.isArray(ports) && ports.length ? ports : [];
   const total = Math.max(1, list.length);
@@ -2285,7 +2372,8 @@ function setBodyScroll(record, widthPx, bodyTop, bodyBottom, textWidth, max) {
   paintBodyScroll(record);
 }
 
-function updateCardTexture({
+function updateCardTexture(options) {
+  const {
   record,
   getNodeTitle,
   getNodeLeadingBadge,
@@ -2296,7 +2384,7 @@ function updateCardTexture({
   getNodeAccentColor,
   getNodeBodyColor,
   getNodeBorderColor,
-}) {
+  } = options;
   const { canvas, texture, node } = record;
   const ctx = canvas.getContext("2d");
   const width = canvas.width;
@@ -2418,7 +2506,7 @@ function updateCardTexture({
   const titleLeft = appearance ? CARD_BADGE_RIGHT_INSET_PX : 36;
   const badgeWidthBudget = Math.max(1, (width - titleLeft - CARD_BADGE_RIGHT_INSET_PX - 220 - 64
     - badgeLayout.gapPx * Math.max(0, badgeEntries.length - 1)) / Math.max(1, badgeEntries.length));
-  const badgeMetrics = badgeEntries.map((entry) => ({
+  let badgeMetrics = badgeEntries.map((entry) => ({
     ...entry,
     pillWidth: Math.min(
       badgeLayout.maxWidthPx,
@@ -2438,10 +2526,29 @@ function updateCardTexture({
 
   ctx.font = titleFont;
   ctx.textBaseline = "top";
-  const titleMaxWidth = Math.max(1, width - titleLeft - 36 - (badgeGroupWidth ? badgeGroupWidth + 64 + (CARD_BADGE_RIGHT_INSET_PX - 30) : 48));
+  let titleMaxWidth = Math.max(1, width - titleLeft - 36 - (badgeGroupWidth ? badgeGroupWidth + 64 + (CARD_BADGE_RIGHT_INSET_PX - 30) : 48));
   // Canvas and the actual world font differ slightly. Keep the ellipsis within
   // the visible title area, then clip only any exceptional glyph overhang.
-  const titleLines = wrapTextLines(ctx, title, titleMaxWidth * 0.92, 1);
+  let titleLines = wrapTextLines(ctx, title, titleMaxWidth * 0.92, 1);
+  if (appearance) {
+    const headerKey = JSON.stringify([title, leadingBadge, badge, titleFont, badgeFont, titleFontSizePx, badgeFontSizePx, width]);
+    if (record.nativeCardHeader?.key !== headerKey) {
+      const layout = { key: headerKey, result: null };
+      record.nativeCardHeader = layout;
+      void computeNativeCardHeader(record, { title, titleFont, titleFontSizePx, badgeEntries,
+        badgeFont, badgeFontSizePx, badgeLayout, width, titleLeft }).then(result => {
+        if (record.nativeCardHeader !== layout || !record.root.parent) return;
+        layout.result = result;
+        updateCardTexture(options);
+      });
+    }
+    const result = record.nativeCardHeader.result;
+    if (result) {
+      badgeMetrics = result.badges.map((entry, i) => ({ ...badgeEntries[i], ...entry }));
+      titleMaxWidth = result.titleWidth;
+      titleLines = [result.title];
+    }
+  }
   const titleBlockHeight = resolveCardTextBlockHeightPx(titleFontSizePx, titleLineGapPx, titleLines.length);
   const headerHeight = Math.max(
     cardHeaderHeightPx,
