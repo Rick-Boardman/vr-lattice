@@ -428,7 +428,10 @@ export async function runUniversalNetworkScene(config) {
   const applyLabelTheme = (label, theme) => {
     if (!theme) return;
     const { textMesh, backgroundMesh } = label.userData;
-    if (textMesh && !explicitLabelColors.has(label)) textMesh.color = theme.labelColor;
+    if (textMesh) {
+      if (!explicitLabelColors.has(label)) textMesh.color = theme.labelColor;
+      textMesh.fillOpacity = 1;
+    }
     if (backgroundMesh?.material) {
       backgroundMesh.material.color.setHex(theme.labelBackgroundColor);
       backgroundMesh.material.opacity = 1;
@@ -491,19 +494,20 @@ export async function runUniversalNetworkScene(config) {
         for (const spr of labelSprites) {
           spr.getWorldPosition(_labelSpritePos);
           const dist = _labelCamPos.distanceTo(_labelSpritePos);
-          if (dist > LABEL_MAX_DISTANCE) {
+          if (activePanelTheme) {
+            // A themed plate is a readability surface, not a translucent
+            // decoration: keep its ink and backing solid until culled together.
+            spr.visible = dist <= LABEL_MAX_DISTANCE;
+          } else if (dist > LABEL_MAX_DISTANCE) {
             spr.visible = false;
-          } else if (dist > LABEL_FADE_START) {
-            spr.visible = true;
-            const fade = 1 - (dist - LABEL_FADE_START) / (LABEL_MAX_DISTANCE - LABEL_FADE_START);
-            const {textMesh,backgroundMesh} = spr.userData;
-            if (textMesh) textMesh.fillOpacity = clamp(fade, 0.1, 1);
-            if (backgroundMesh?.material) backgroundMesh.material.opacity = (activePanelTheme ? 1 : 0.35) * clamp(fade, 0.1, 1);
           } else {
             spr.visible = true;
-            const {textMesh,backgroundMesh} = spr.userData;
-            if (textMesh) textMesh.fillOpacity = 1;
-            if (backgroundMesh?.material) backgroundMesh.material.opacity = activePanelTheme ? 1 : 0.35;
+            const fade = dist > LABEL_FADE_START
+              ? clamp(1 - (dist - LABEL_FADE_START) / (LABEL_MAX_DISTANCE - LABEL_FADE_START), 0.1, 1)
+              : 1;
+            const { textMesh, backgroundMesh } = spr.userData;
+            if (textMesh) textMesh.fillOpacity = fade;
+            if (backgroundMesh?.material) backgroundMesh.material.opacity = 0.35 * fade;
           }
         }
       }
