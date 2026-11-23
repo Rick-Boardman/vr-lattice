@@ -180,7 +180,8 @@ export function makeGroupByIdForLayoutMode(graph, mode, opts = {}) {
     const fallback = String(opts?.fallback || "SHARED");
     const groupById = new Map();
     for (const n of nodes) {
-      const v = n?.[field];
+      const override = opts?.fallbackFieldByType?.[n?.type];
+      const v = n?.[field] ?? (override ? n?.[override] : null);
       groupById.set(n.id, v != null && String(v).trim() ? String(v) : fallback);
     }
     return groupById;
@@ -194,6 +195,7 @@ export function makeGroupByIdForLayoutMode(graph, mode, opts = {}) {
       if (n?.type === "application" && n.environment) envByAppId.set(n.id, n.environment);
     }
 
+    const explicitEnvById = new Map(nodes.filter(n => n?.environment).map(n => [n.id,n.environment]));
     const inferEdgeTypes = new Set(["APP_USES_SERVER", "APP_USES_FILESHARE"]);
     const resourceEnvCounts = new Map();
     for (const e of edges) {
@@ -206,19 +208,28 @@ export function makeGroupByIdForLayoutMode(graph, mode, opts = {}) {
       m.set(env, (m.get(env) || 0) + 1);
     }
 
+    const inheritedTypes = new Set(opts?.inheritEdgeTypes ?? []);
+    const shared = String(opts?.shared || "SHARED");
+    const unknown = String(opts?.unknown || shared);
+    // Inherit from declared/inferred host environments without allowing an
+    // unclassified host to hide a genuinely unknown resource.
+    const inheritedCounts = new Map();
+    for (const e of edges) {
+      if (!inheritedTypes.has(e?.type)) continue;
+      const envs = explicitEnvById.has(e.fromId) ? [explicitEnvById.get(e.fromId)]
+        : resourceEnvCounts.get(e.fromId)?.keys() ?? [];
+      const candidates = inheritedCounts.get(e.toId) ?? new Set();
+      for (const env of envs) candidates.add(env);
+      inheritedCounts.set(e.toId,candidates);
+    }
     const groupById = new Map();
     for (const n of nodes) {
       if (n?.environment) {
         groupById.set(n.id, n.environment);
         continue;
       }
-      const counts = resourceEnvCounts.get(n.id);
-      if (!counts || counts.size === 0) {
-        groupById.set(n.id, "SHARED");
-        continue;
-      }
-      const envs = Array.from(counts.keys());
-      groupById.set(n.id, envs.length >= 2 ? "SHARED" : envs[0]);
+      const envs = new Set([...(resourceEnvCounts.get(n.id)?.keys() ?? []), ...(inheritedCounts.get(n.id) ?? [])]);
+      groupById.set(n.id, envs.size === 0 ? unknown : envs.size >= 2 ? shared : envs.values().next().value);
     }
     return groupById;
   }
