@@ -376,6 +376,7 @@ export function createBillboardTextLabel({
   unicodeFontsURL = HUD_TEXT_UNICODE_FONTS_URL,
   backgroundColor = 0x000000,
   backgroundOpacity = 0.35,
+  opaquePlate = false,
   borderColor = null,
   borderOpacity = 0.85,
   borderWidth = 0.045,
@@ -412,7 +413,10 @@ export function createBillboardTextLabel({
     new THREE.MeshBasicMaterial({
       color: asHexColor(backgroundColor, 0x000000),
       transparent: true,
-      opacity: Number.isFinite(backgroundOpacity) ? backgroundOpacity : 0.35,
+      // Retain the late (transparent) render queue above network lines,
+      // but replace destination pixels wherever the plate geometry exists.
+      opacity: opaquePlate ? 1 : Number.isFinite(backgroundOpacity) ? backgroundOpacity : 0.35,
+      blending: opaquePlate ? THREE.NoBlending : THREE.NormalBlending,
       depthTest: !!depthTest,
       depthWrite: !!depthWrite,
     }),
@@ -510,6 +514,18 @@ export function createBillboardTextLabel({
   return group;
 }
 
+// Three sorts the plate/border/ink of one Group by groupOrder first. Give each
+// billboard a distinct groupOrder so a near plate occludes every part of a far
+// one. Keep the layer above the shared network meshes, with stable ties.
+export function orderOpaqueNetworkBillboards(visible) {
+  visible.sort((a, b) => b.depth - a.depth || a.label.id - b.label.id);
+  for (let i = 0; i < visible.length; i++) {
+    const label = visible[i].label;
+    const order = 10 + i * 0.04;
+    if (label.renderOrder !== order) label.setRenderOrder(order);
+  }
+}
+
 export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512, canvasH = 128, font = "44px monospace", scale = [8, 2, 1], legible = false } = {}) {
   return function makeLabelSprite({ text, color = "#dde3ea" } = {}) {
     return createBillboardTextLabel({
@@ -523,6 +539,7 @@ export function makeLabelSpriteFactory({ THREE, Text = TroikaText, canvasW = 512
       outlineWidth: legible ? 0 : 0.025,
       backgroundColor: 0x000000,
       backgroundOpacity: 0.35,
+      opaquePlate: legible,
       borderColor: legible ? 0x627c99 : null,
       borderOpacity: legible ? 1 : 0.85,
       depthTest: false,

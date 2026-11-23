@@ -28,6 +28,7 @@ import {
   buildNodeMeshFromSpec,
   buildEdgeLineFromSpec,
   makeLabelSpriteFactory,
+  orderOpaqueNetworkBillboards,
   applyGenericNodeHighlight,
 } from "./graph-mesh-builders.js";
 import { defaultHotbarVisuals, projectWorldToHud, applySmartInitialView } from "./graph-view-helpers.js";
@@ -492,6 +493,8 @@ export async function runUniversalNetworkScene(config) {
       // Distance-based label culling
       if (showLabels && labelSprites.length) {
         _ctx.camera.getWorldPosition(_labelCamPos);
+        _ctx.camera.getWorldDirection(_labelCamForward);
+        _visibleOpaqueLabels.length = 0;
         for (const spr of labelSprites) {
           spr.getWorldPosition(_labelSpritePos);
           const dist = _labelCamPos.distanceTo(_labelSpritePos);
@@ -499,6 +502,11 @@ export async function runUniversalNetworkScene(config) {
             // A themed plate is a readability surface, not a translucent
             // decoration: keep its ink and backing solid until culled together.
             spr.visible = dist <= LABEL_MAX_DISTANCE;
+            if (spr.visible) {
+              const layer = spr.userData.opaqueNetworkLayer ??= { label: spr, depth: 0 };
+              layer.depth = _labelSpritePos.sub(_labelCamPos).dot(_labelCamForward);
+              _visibleOpaqueLabels.push(layer);
+            }
           } else if (dist > LABEL_MAX_DISTANCE) {
             spr.visible = false;
           } else {
@@ -511,6 +519,7 @@ export async function runUniversalNetworkScene(config) {
             if (backgroundMesh?.material) backgroundMesh.material.opacity = 0.35 * fade;
           }
         }
+        orderOpaqueNetworkBillboards(_visibleOpaqueLabels);
       }
 
       if (nodeMeshes.length) {
@@ -616,6 +625,8 @@ export async function runUniversalNetworkScene(config) {
   const LABEL_MAX_DISTANCE = Number(config?.render?.labelMaxDistance ?? 65);
   const LABEL_FADE_START = LABEL_MAX_DISTANCE * 0.7;
   const _labelCamPos = new THREE.Vector3();
+  const _labelCamForward = new THREE.Vector3();
+  const _visibleOpaqueLabels = [];
   const _labelSpritePos = new THREE.Vector3();
 
   const pulseEffect = createNetworkPulseEffect({

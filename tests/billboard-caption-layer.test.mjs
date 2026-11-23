@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { createBillboardTextLabel, makeLabelSpriteFactory } from "../src/graph/graph-mesh-builders.js";
+import { createBillboardTextLabel, makeLabelSpriteFactory, orderOpaqueNetworkBillboards } from "../src/graph/graph-mesh-builders.js";
 
 class TestText extends THREE.Object3D {
   sync() {}
@@ -55,5 +55,24 @@ test("native network label has a true inset outline, not a plate covering its fi
     assert.ok(backgroundMesh.renderOrder < borderMesh.renderOrder && borderMesh.renderOrder < textMesh.renderOrder);
   } finally {
     label.dispose();
+  }
+});
+
+test("a near label plate paints after the entire far label, in either view direction", () => {
+  const make = makeLabelSpriteFactory({ THREE, Text: TestText, legible: true });
+  const a = make({ text: "near" }), b = make({ text: "far" });
+  const plate = label => label.userData.backgroundMesh;
+  const ink = label => label.userData.textMesh;
+  try {
+    orderOpaqueNetworkBillboards([{label:a,depth:5},{label:b,depth:25}]);
+    assert.ok(plate(a).renderOrder > ink(b).renderOrder);
+    assert.equal(plate(a).material.opacity, 1);
+    assert.equal(plate(a).material.blending, THREE.NoBlending);
+    assert.equal(plate(a).material.transparent, true);
+    orderOpaqueNetworkBillboards([{label:a,depth:25},{label:b,depth:5}]);
+    assert.ok(plate(b).renderOrder > ink(a).renderOrder);
+  } finally {
+    a.dispose();
+    b.dispose();
   }
 });
