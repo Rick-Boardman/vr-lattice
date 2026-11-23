@@ -670,8 +670,8 @@ export async function runUniversalNetworkScene(config) {
     if(!prefOptions) return;
     pulseEffect.setTheme(theme?.key);
     for(const mesh of nodeMeshes) refreshNodeInk(mesh,theme);
-    for(const line of edgeLines) refreshEdgeInk(line,theme);
-    pulseEffect.setEdgeEmphasis(edgeLines,{
+    for(const line of [...edgeLines,...summaryLines]) refreshEdgeInk(line,theme);
+    pulseEffect.setEdgeEmphasis(networkModel ? visiblePulseLines : edgeLines,{
       dimOpacity:config?.pulse?.dimOpacity,brightOpacity:config?.pulse?.brightOpacity,force:true,
     });
   };
@@ -827,6 +827,7 @@ export async function runUniversalNetworkScene(config) {
   }
 
   function restoreNetworkOverview() {
+    allLinks = false;
     setSelected(null);
     applyGenericNodeHighlight(nodeMeshes, { selectedId: null, hoveredId: hoveredNodeId });
     fitNetworkView();
@@ -919,7 +920,8 @@ export async function runUniversalNetworkScene(config) {
   function setSelected(nodeId) {
     if (networkModel) {
       selectedGroup = nodeId && groupLabels.has(nodeId) ? nodeId.slice("group:".length) : null;
-      allLinks = false; focused = false;
+      if (nodeId) allLinks = false;
+      focused = false;
     }
     selectedNodeId = selectedGroup ? null : nodeId || null;
     selectedAtS = nowSeconds();
