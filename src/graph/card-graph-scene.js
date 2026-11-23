@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { findGraphSceneAppearance } from "./scene-appearance.js";
-import { setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
+import { getGraphSceneEditSurface, setGraphSceneEditSurface } from "./scene-edit-surfaces.js";
 import { layoutCardBodyText } from "./card-body-layout.js";
 import { getTextRenderInfo, Text as TroikaText } from "troika-three-text";
 import { GRAPH_CAPTION_PALETTE, graphContrastColor } from "./appearance-contrast.js";
@@ -691,6 +691,18 @@ export function createCardGraphScene({
 
   function getNodeMeshById(nodeId) {
     return nodeRecords.get(String(nodeId ?? ""))?.cardMesh ?? null;
+  }
+
+  // Host apps may expose an accessible read-only control over their projection
+  // of this surface. It does not participate in graph picking or wheel input.
+  function getBodyOverflowTarget(nodeId) {
+    const record = nodeRecords.get(nodeId);
+    const mesh = record?.cardMesh;
+    if (record?.shape !== "card" || !mesh?.parent ||
+        !record.textMeshes.bodyText?.userData.graphBodyFlow?.overflow) return null;
+    for (let object = mesh; object; object = object.parent) if (!object.visible) return null;
+    const surface = getGraphSceneEditSurface(mesh, "body");
+    return surface ? { kind: "node", id: nodeId, node: record.node, field: "body", surface } : null;
   }
 
   function resolveLayoutPosition(nodeId) {
@@ -1576,6 +1588,7 @@ export function createCardGraphScene({
     getNodeIds: () => graph.nodes.map((node) => node.id),
     getNodeById,
     getNodeMeshById,
+    getBodyOverflowTarget,
     bringNodeIdsToFront,
     setSelectedIds,
     setSelectedEdgeKey,
@@ -2361,25 +2374,31 @@ function updateCardTexture({
       ctx.save();
       ctx.font = bodyFont;
       try {
-        return layoutCardBodyText(prose, {
+        let overflow = false;
+        const text = layoutCardBodyText(prose, {
           width: maxWidth, height: bodyHeight, fontHeight: bodyFontSizePx,
           lineGap: bodyLineGapPx, measure: text => ctx.measureText(text).width,
+          onOverflow: () => { overflow = Boolean(bodyText); },
         }).join("\n");
+        return { text, overflow };
       } finally {
         ctx.restore();
       }
     };
     const nativeBody = bodyMesh instanceof TroikaText;
-    const key = JSON.stringify([prose, bodyFont, bodyMesh?.font, bodyMesh?.unicodeFontsURL,
+    const key = JSON.stringify([prose, Boolean(bodyText), bodyFont, bodyMesh?.font, bodyMesh?.unicodeFontsURL,
       fontWorld, lineHeight, initialWidth, textHeightWorld]);
     if (bodyMesh && bodyMesh.userData.graphBodyFlow?.key !== key) {
-      const layout = { key, text: nativeBody ? "" : flow(initialWidth) };
+      const layout = { key, ...(nativeBody ? { text: "", overflow: false } : flow(initialWidth)) };
       bodyMesh.userData.graphBodyFlow = layout;
       // Validate the actual glyph paths, including fallback fonts and final-line
       // ellipsis, before ever displaying them. Reuse this result on mere repaints.
       const verify = (maxWidth, bodyHeight, attempt = 0) => {
-        const candidate = flow(maxWidth, bodyHeight);
-        if (!candidate || attempt > 12) return;
+        const { text: candidate, overflow } = flow(maxWidth, bodyHeight);
+        if (!candidate || attempt > 12) {
+          layout.overflow = overflow;
+          return;
+        }
         getTextRenderInfo({
           text: candidate, font: bodyMesh.font, unicodeFontsURL: bodyMesh.unicodeFontsURL,
           fontSize: fontWorld, lineHeight, anchorX: "left", anchorY: "top", whiteSpace: "nowrap",
@@ -2392,6 +2411,7 @@ function updateCardTexture({
               bottom < -textHeightWorld ? bodyHeight - bodyLineGapPx : bodyHeight, attempt + 1);
           } else {
             layout.text = candidate;
+            layout.overflow = overflow;
             bodyMesh.text = candidate;
             bodyMesh.sync();
           }

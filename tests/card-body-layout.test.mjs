@@ -20,3 +20,12 @@ test("only real overflow ellipsizes within the height reserved above a metric", 
 test("long unbroken words wrap without breaking surrogate pairs", () => {
   assert.deepEqual(layoutCardBodyText("ok 😀😀😀😀😀", { ...options, width: 3 }), ["ok", "😀😀😀", "😀😀"]);
 });
+
+test("overflow signal distinguishes clipping from authored ellipsis", () => {
+  let overflows = 0;
+  const measured = { ...options, height: 22, onOverflow: () => { overflows++; } };
+  layoutCardBodyText("Normal line\nAuthored…", measured);
+  assert.equal(overflows, 0);
+  layoutCardBodyText("Normal line\nFits\nExtra line", measured);
+  assert.equal(overflows, 1);
+});

@@ -6,12 +6,15 @@ const graphemes = text => graphemeSegmenter
   ? Array.from(graphemeSegmenter.segment(text), part => part.segment) : Array.from(text);
 
 /** Preflow authored text into the actual card body. The returned lines are presentation-only. */
-export function layoutCardBodyText(text, { width, height, fontHeight, lineGap, measure }) {
+export function layoutCardBodyText(text, { width, height, fontHeight, lineGap, measure, onOverflow }) {
   const maxLines = height >= fontHeight && fontHeight > 0 && lineGap > 0
     ? 1 + Math.floor((height - fontHeight) / lineGap) : 0;
   const paragraphs = String(text ?? "").replace(/\r\n?/gu, "\n").split("\n");
   const lines = [];
-  if (maxLines === 0 || width <= 0) return [];
+  if (maxLines === 0 || width <= 0) {
+    if (String(text ?? "").trim()) onOverflow?.();
+    return [];
+  }
   const fits = candidate => measure(candidate) <= width;
   for (const paragraph of paragraphs) {
     let line = "";
@@ -45,6 +48,7 @@ export function layoutCardBodyText(text, { width, height, fontHeight, lineGap, m
     if (lines.length > maxLines) break;
   }
   if (lines.length <= maxLines) return lines;
+  onOverflow?.();
   lines.length = maxLines;
   const last = graphemes(lines[maxLines - 1].trimEnd());
   while (last.length && !fits(last.join("") + "…")) last.pop();
