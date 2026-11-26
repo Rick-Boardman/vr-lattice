@@ -65,6 +65,7 @@ export {
   hideHudWindow,
   ensureGraphHudWindows,
   applyStandardGraphHudLayout,
+  relayoutStandardGraphHud,
   hideDefaultDemoWindows,
 } from "./hud-layout.js";
 

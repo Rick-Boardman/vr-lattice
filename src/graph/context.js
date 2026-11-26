@@ -9,7 +9,7 @@ import { clamp } from "@rb/halo/src/scalar-math.js";
 import { graphPanelTheme, installGraphPanelTheme } from "./panel-theme.js";
 import { bindGraphSceneAppearance } from "./scene-appearance.js";
 import { configureXrSafeRenderer, wireDesktopResize } from "./boot.js";
-import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWindows } from "./hud-layout.js";
+import { applyStandardGraphHudLayout, hideDefaultDemoWindows, ensureGraphHudWindows, relayoutStandardGraphHud } from "./hud-layout.js";
 
 /**
  * Purpose: Create the shared graph-scene runtime context by wiring Three.js scene state, the scene HUD bootstrap, graph HUD layout defaults, and resize handling into one reusable composition root.
@@ -300,7 +300,13 @@ export function createGraphSceneContext({
   });
   if (applyStandardLayout) applyStandardGraphHudLayout(hudSystem);
 
-  const unwireResize = wireDesktopResize({ renderer, camera: cameraObj, hudSystem });
+  const unwireResize = wireDesktopResize({
+    renderer,
+    camera: cameraObj,
+    hudSystem,
+    // A phone turned or a window narrowed: the two-column layout cannot be re-anchored without overlaps.
+    afterResize: applyStandardLayout ? () => relayoutStandardGraphHud(hudSystem) : null,
+  });
   const disposeListeners = new Set();
   const unbindAppearance = bindGraphSceneAppearance(sceneObj, () => panelTheme?.mode ?? null, (listener) => {
     pendingThemeListeners.add(listener);
