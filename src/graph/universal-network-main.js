@@ -39,7 +39,7 @@ import { graphPanelTheme } from "./panel-theme.js";
 import { createBusinessIconTextures } from "./business-icons.js";
 import { graphContrastColor } from "./appearance-contrast.js";
 import { createNetworkLabelProjector, retainNonoverlappingNetworkLabels } from "./network-label-collision.js";
-import { createNetworkViewModel, deriveNetworkView, networkGroupKey, networkFitDistance } from "./network-view.js";
+import { createNetworkViewModel, deriveNetworkView, networkGroupKey, networkFitDistance, networkFitDistanceForPoints } from "./network-view.js";
 
 
 const GRAPH_HOTBAR_HINT_COLOR = 0x7cd992;
@@ -54,6 +54,8 @@ function validateBasicGraphShape(g) {
 function nowSeconds() {
   return performance.now() / 1000;
 }
+
+const NETWORK_FIT_MIN_RADII = 1.5;
 
 function getUrlParam(name) {
   try {
@@ -532,8 +534,11 @@ export async function runUniversalNetworkScene(config) {
           const isActive = isGroup
             ? spr.userData.groupKey === selectedGroupKey
             : spr.userData.nodeId === selectedNodeId || spr.userData.nodeId === hoveredNodeId;
-          const keep = isGroup || isActive;
-          if (reduceLabelOverlaps && (keep || dist <= LABEL_MAX_DISTANCE)) {
+          // Only what the person is pointing at is exempt; a group label outranks a person's but still yields to a
+          // nearer group label instead of printing over it.
+          const keep = isActive;
+          // Group labels show at any distance, so they always take part in the overlap check.
+          if (reduceLabelOverlaps && (keep || isGroup || dist <= LABEL_MAX_DISTANCE)) {
             const rect = projectNetworkLabel(spr,_labelSpritePos,_ctx.camera,labelWidth,labelHeight);
             if (rect) {
               _projectedNetworkLabels.push({label:spr,rect,depth:dist,
@@ -562,7 +567,14 @@ export async function runUniversalNetworkScene(config) {
           }
         }
         if (reduceLabelOverlaps) {
-          _previousNetworkLabels=retainNonoverlappingNetworkLabels(_projectedNetworkLabels,_previousNetworkLabels);
+          _labelObstacles.length = 0;
+          for (const mesh of nodeMeshes) {
+            if (!mesh.visible) continue;
+            _labelObstaclePos.setFromMatrixPosition(mesh.matrixWorld).project(_ctx.camera);
+            if (_labelObstaclePos.z < 1) _labelObstacles.push({ x: (1 + _labelObstaclePos.x) * labelWidth / 2,
+              y: (1 - _labelObstaclePos.y) * labelHeight / 2, owner: mesh.userData.id });
+          }
+          _previousNetworkLabels=retainNonoverlappingNetworkLabels(_projectedNetworkLabels,_previousNetworkLabels,_labelObstacles);
           for (const {label} of _projectedNetworkLabels) label.visible &&= _previousNetworkLabels.has(label);
         } else _previousNetworkLabels.clear();
         orderOpaqueNetworkBillboards(_visibleOpaqueLabels);
@@ -674,6 +686,8 @@ export async function runUniversalNetworkScene(config) {
   const _labelCamForward = new THREE.Vector3();
   const _visibleOpaqueLabels = [];
   const _projectedNetworkLabels = [];
+  const _labelObstacles = [];
+  const _labelObstaclePos = new THREE.Vector3();
   let _previousNetworkLabels = new Set();
   const projectNetworkLabel = createNetworkLabelProjector(THREE);
   const _labelSpritePos = new THREE.Vector3();
@@ -839,8 +853,18 @@ export async function runUniversalNetworkScene(config) {
     if (visibleView.overview) for (const label of groupLabels.values()) if (label.visible) box.expandByObject(label);
     if (box.isEmpty()) return false;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const center = sphere.center;
+    const center = box.getCenter(new THREE.Vector3());
     const radius = Math.max(2, sphere.radius);
+    // Each node's own sphere and label plate must fit too, not just its centre.
+    const fitPoints = [];
+    const addBox = object => {
+      const extent = new THREE.Box3().setFromObject(object);
+      if (extent.isEmpty()) return;
+      for (const x of [extent.min.x, extent.max.x]) for (const y of [extent.min.y, extent.max.y]) for (const z of [extent.min.z, extent.max.z]) fitPoints.push(new THREE.Vector3(x, y, z));
+    };
+    for (const mesh of nodeMeshes) if (mesh.visible) addBox(mesh);
+    for (const label of labelSprites) if (label.visible && label.userData.backgroundMesh) addBox(label.userData.backgroundMesh);
+    if (visibleView.overview) for (const label of groupLabels.values()) if (label.visible) addBox(label.userData.backgroundMesh ?? label);
     // A focused graph needs room between its open floating view and target panels.
     // Use their actual layout extents; if they leave no usable central corridor,
     // keep the standard full-viewport fit and let the user move/collapse the panels.
@@ -860,13 +884,18 @@ export async function runUniversalNetworkScene(config) {
         horizontalOffset = 1 - (left + right) / viewport;
       }
     }
-    const distance = Math.max(8, networkFitDistance(radius, camera.fov, camera.aspect * fraction));
+    // A stable elevated outlook shows the entire layout instead of choosing one random group.
+    const out = new THREE.Vector3(0.08, 0.61, 0.8).normalize();
+    // Fit what is there, not its bounding sphere; the sphere fit stays the ceiling.
+    // Not closer than 1.5 radii: nearer, perspective makes the front labels several times the size of the back ones.
+    const distance = Math.max(8, NETWORK_FIT_MIN_RADII * radius, Math.min(
+      networkFitDistance(radius, camera.fov, camera.aspect * fraction),
+      networkFitDistanceForPoints(fitPoints, center, out, camera.fov, camera.aspect, { fraction, fill: 0.8 }),
+    ));
     for (const label of groupLabels.values()) {
       const base = label.userData.overviewBaseScale ??= label.scale.clone();
       label.scale.copy(base).multiplyScalar(Math.max(1, distance / 92));
     }
-    // A stable elevated outlook shows the entire layout instead of choosing one random group.
-    const out = new THREE.Vector3(0.08, 0.61, 0.8).normalize();
     const right = new THREE.Vector3(out.z, 0, -out.x).normalize();
     const shift = horizontalOffset * distance * Math.tan(camera.fov * Math.PI / 360) * camera.aspect;
     const lookAtCenter = center.clone().addScaledVector(right, shift);
@@ -1108,6 +1137,9 @@ export async function runUniversalNetworkScene(config) {
       applyGenericNodeHighlight(nodeMeshes, { selectedId: selectedNodeId, hoveredId: hoveredNodeId });
     },
     onSelectMiss: () => {
+      // In a network view a click on empty space is usually the start of an orbit or a stray tap: keep the selected
+      // group or person (and its focus) until the person chooses Back.
+      if (networkModel) return;
       setSelected(null);
       applyGenericNodeHighlight(nodeMeshes, { selectedId: selectedNodeId, hoveredId: hoveredNodeId });
     },

@@ -44,6 +44,58 @@ export function selectBackbonePaths(paths, extraPerGroup = 1) {
   return ranked.filter(edge => selected.has(edge));
 }
 
+const linkWeight = edge => {
+  const weight = Number(edge.weight ?? edge.count);
+  return Number.isFinite(weight) && weight > 0 ? weight : 1;
+};
+
+/**
+ * The backbone summarises links between communities; without links inside them a cluster reads as a heap of
+ * spheres (a 16-person dumbbell showed one line). A small graph keeps every link inside its communities; a large
+ * one keeps each person's strongest few, so the clusters show their structure without the full hairball.
+ */
+export function selectCommunityLinks(inside, totalLinks, { overviewDetailLinkLimit = 120, overviewLinksPerNode = 2 } = {}) {
+  if (totalLinks <= overviewDetailLinkLimit) return [...inside];
+  const perNode = Math.max(0, Math.floor(Number(overviewLinksPerNode) || 0));
+  if (!perNode) return [];
+  const ranked = [...inside].sort((a,b) => linkWeight(b)-linkWeight(a) ||
+    stableCompare(endpoints(a).join(), endpoints(b).join()));
+  const kept = new Set(), used = new Map();
+  for (const edge of ranked) {
+    const [a, b] = endpoints(edge);
+    if ((used.get(a) ?? 0) >= perNode && (used.get(b) ?? 0) >= perNode) continue;
+    used.set(a, (used.get(a) ?? 0) + 1);
+    used.set(b, (used.get(b) ?? 0) + 1);
+    kept.add(edge);
+  }
+  return inside.filter(edge => kept.has(edge));
+}
+
+/**
+ * Smallest camera distance, looking along -`out` at `center`, at which every point projects inside `fill` of the
+ * viewport (the usable horizontal `fraction` of it). Fits the actual extent instead of a bounding sphere, which left a
+ * graph filling a twentieth of the view.
+ */
+export function networkFitDistanceForPoints(points, center, out, verticalFovDeg, aspect, { fill = 0.84, fraction = 1, minDistance = 8 } = {}) {
+  const tan = Math.tan((Number(verticalFovDeg) || 60) * Math.PI / 360);
+  const tanX = tan * Math.max(0.05, Number(aspect) || 1) * Math.max(0.1, Math.min(1, fraction));
+  const len = Math.hypot(out.x, out.y, out.z) || 1;
+  const o = { x: out.x / len, y: out.y / len, z: out.z / len };
+  // right = up × out with up = +Y; up' = out × right
+  let r = { x: o.z, y: 0, z: -o.x };
+  const rl = Math.hypot(r.x, r.z) || 1; r = { x: r.x / rl, y: 0, z: r.z / rl };
+  const u = { x: o.y * r.z - o.z * r.y, y: o.z * r.x - o.x * r.z, z: o.x * r.y - o.y * r.x };
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+  const rel = points.map(p => ({ x: p.x - center.x, y: p.y - center.y, z: p.z - center.z }));
+  let needed = minDistance;
+  for (const p of rel) {
+    // depth from a camera at distance d: d - p·out; must satisfy |p·right| <= fill·tanX·depth (and y likewise)
+    const along = dot(p, o);
+    needed = Math.max(needed, along + Math.abs(dot(p, r)) / (fill * tanX) + 0.5, along + Math.abs(dot(p, u)) / (fill * tan) + 0.5);
+  }
+  return needed;
+}
+
 /** Presentation-only maps: refuse ambiguous or cyclic parent assignments. */
 export function createNetworkViewModel(graph, groupByNode = new Map(), options = {}, communityByNode = new Map()) {
   const ids = new Set((graph.nodes ?? []).map(node => String(node.id)));
@@ -96,7 +148,7 @@ export function deriveNetworkView(model, { all = false, groupId = null, nodeId =
   const backbone = !all && selected.size === 0 && overviewLinks === "backbone";
   const overview = backbone || (!all && selected.size === 0 &&
     model.options.summarizeOverview === true && model.groups.size > 1);
-  const raw = [], aggregated = new Map();
+  const raw = [], aggregated = new Map(), inside = [];
   for (const edge of model.edges) {
     const [a, b] = endpoints(edge);
     if (!all && selected.size && !selected.has(a) && !selected.has(b)) continue;
@@ -109,7 +161,11 @@ export function deriveNetworkView(model, { all = false, groupId = null, nodeId =
     if (from === to && a !== b) continue;
     if (backbone) {
       from = model.backboneByNode.get(from); to = model.backboneByNode.get(to);
-      if (from === to) continue;
+      if (from === to) {
+        // A link inside one community: candidate for the community's own structure (below).
+        if (ownerFrom === a && ownerTo === b && a !== b) inside.push(edge);
+        continue;
+      }
     } else if (overview) {
       const ga = model.groupByNode.get(from), gb = model.groupByNode.get(to);
       if (ga != null && gb != null && String(ga) === String(gb)) continue;
@@ -139,6 +195,7 @@ export function deriveNetworkView(model, { all = false, groupId = null, nodeId =
   if (focused && selected.size) {
     for (const id of nodeIds) if (!visibleKeys.has(id)) nodeIds.delete(id);
   }
+  if (backbone) raw.push(...selectCommunityLinks(inside, model.edges.length, model.options));
   const paths = [...aggregated.values()];
   return { raw, aggregated: backbone ? selectBackbonePaths(paths, model.options.backboneExtrasPerGroup) : paths,
     nodeIds, overview, backbone, overviewPathCount: overview ? paths.length : 0 };
