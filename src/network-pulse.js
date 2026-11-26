@@ -70,6 +70,8 @@ export function createNetworkPulseEffect({
   const lightInk = new THREE.Color().setHSL(hsl.h, Math.min(0.88, hsl.s * 1.30), 0.21);
   const lightCore = baseColor.clone().lerp(new THREE.Color(0xffffff), 0.45);
   const darkInk = baseColor.clone();
+  const lightHighlight = new THREE.Color().setHSL(hsl.h, Math.min(0.75, hsl.s * 1.15), 0.42);
+  let highlightHex = color;
   const darkCore = baseColor.clone().lerp(new THREE.Color(0xffffff), 0.65);
   const pulseMat = new THREE.ShaderMaterial({
     uniforms: {
@@ -162,6 +164,9 @@ export function createNetworkPulseEffect({
     pulseMat.uniforms.pulseCore.value = light ? lightCore : darkCore;
     // Light needs chromatic contrast; additive glow washes out on pale worlds.
     pulseMat.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
+    // A selected node's links take the same ink: the pale dark-scene blue was ~1.6:1 on the light world.
+    highlightHex = light ? lightHighlight.getHex() : color;
+    lastEmphasisNodeId = undefined;
   }
 
   let activeNodeId = null;
@@ -253,7 +258,7 @@ export function createNetworkPulseEffect({
       const pulseable = _edgeLineIsPulseable(line);
       if (incident && pulseable) {
         line.material.opacity = brightOpacity;
-        line.material.color.setHex(color);
+        line.material.color.setHex(highlightHex);
       } else {
         // Keep incident-but-not-pulseable edges at base values.
         if (incident && !pulseable) {
