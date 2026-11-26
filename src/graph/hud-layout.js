@@ -102,12 +102,15 @@ export function ensureGraphHudWindows(hudSystem, options = {}) {
  * @returns {void}
  * Side effects: mutates graph-scene HUD window titles, positions, sizes, collapsed states, layout-initialization flags, and clears the system-log window contents.
  */
-export function applyStandardGraphHudLayout(hudSystem) {
+export function applyStandardGraphHudLayout(hudSystem, { relayout = false } = {}) {
   // Desktop layout:
   // - DEBUG + SYSTEM LOG in a left column
   // - VR + TARGET + hotbar in a right column
   // - HELP stays hidden until requested
   if (!hudSystem?.hud?.ui) return;
+  // The first layout starts every bar collapsed; a relayout after a resize keeps what the person opened or closed.
+  const collapse = win => { if (!relayout) win.collapsed = true; };
+  const heightOf = win => (win.collapsed ? HUD_WINDOW_TITLE_HEIGHT_PX : Math.round(Number(win.h) || 0));
 
   const W = hudSystem?.hud?.layoutW ?? HUD_LAYOUT_DEFAULT_WIDTH_PX;
   const H = hudSystem?.hud?.layoutH ?? HUD_LAYOUT_DEFAULT_HEIGHT_PX;
@@ -165,12 +168,42 @@ export function applyStandardGraphHudLayout(hudSystem) {
   const useLeftColumn = leftColumnMaxW >= 320;
 
   const debug = hudSystem?.hud?.ui?.windows?.debug;
+  const chat = hudSystem?.hud?.ui?.windows?.chat;
+  if (!useLeftColumn) {
+    // A phone or narrow viewer: no room for two columns. Enter VR keeps the top right; the collapsed SYSTEM LOG, DEBUG
+    // and TARGET bars stack below it at the viewer's width, and TARGET opens into the space above the hotbar.
+    const columnW = Math.max(160, Math.floor(W - edge * 2));
+    let y = !xrWasHidden && xr ? Math.round(xr.y + xr.h + stackGap) : edge;
+    for (const win of [chat, debug]) {
+      if (!win) continue;
+      if (win === chat) chat.title = "SYSTEM LOG";
+      collapse(win);
+      win.w = columnW;
+      if (Number.isFinite(win.minW)) win.minW = Math.min(Math.round(win.minW), columnW);
+      win.x = edge;
+      win.y = y;
+      y += heightOf(win) + Math.round(stackGap / 2);
+    }
+    if (sel) {
+      const bottom = hotbar ? hotbar.y - stackGap : H - edge;
+      const selectionH = Math.max(titleH * 4, Math.min(Math.round(sel.h), Math.floor(bottom - y)));
+      collapse(sel);
+      sel.w = Math.min(Math.round(sel.w), columnW);
+      if (Number.isFinite(sel.minW)) sel.minW = Math.min(Math.round(sel.minW), columnW);
+      sel.h = selectionH;
+      if (Number.isFinite(sel.minH)) sel.minH = Math.min(Math.round(sel.minH), selectionH);
+      sel.x = Math.max(edge, Math.floor(W - sel.w - edge));
+      sel.y = y;
+    }
+    finishGraphHudLayout(hudSystem, { relayout });
+    return;
+  }
   if (debug) {
     const minDebugW = Math.max(320, Math.floor(Number(debug.minW) || 0));
     const maxDebugW = useLeftColumn
       ? Math.max(minDebugW, leftColumnMaxW)
       : Math.max(minDebugW, Math.floor(W * 0.42));
-    debug.collapsed = true;
+    collapse(debug);
     debug.w = clamp(debug.w, minDebugW, maxDebugW);
     debug.x = useLeftColumn ? edge : Math.max(edge, Math.floor(W - debug.w - edge));
     debug.y = useLeftColumn
@@ -178,13 +211,12 @@ export function applyStandardGraphHudLayout(hudSystem) {
       : Math.max(edge, Math.floor(H - debug.h - edge));
   }
 
-  const chat = hudSystem?.hud?.ui?.windows?.chat;
   if (chat) {
     const maxChatW = useLeftColumn
       ? Math.max(320, leftColumnMaxW)
       : Math.max(320, Math.floor(W * 0.56));
     chat.title = "SYSTEM LOG";
-    chat.collapsed = true;
+    collapse(chat);
     chat.w = clamp(chat.w, 320, maxChatW);
     chat.x = useLeftColumn ? edge : Math.max(edge, Math.floor(W - chat.w - edge));
     chat.y = useLeftColumn
@@ -208,7 +240,7 @@ export function applyStandardGraphHudLayout(hudSystem) {
     const maxSelectionH = Math.max(titleH * 4, Math.floor(rightColumnBottom - rightColumnTop));
     const nextSelectionH = Math.max(titleH * 4, Math.min(Math.round(sel.h), maxSelectionH));
 
-    sel.collapsed = true;
+    collapse(sel);
     sel.h = nextSelectionH;
     if (Number.isFinite(sel.minH)) sel.minH = Math.min(Math.round(sel.minH), nextSelectionH);
     sel.x = Math.max(edge, Math.floor(W - sel.w - edge));
@@ -219,6 +251,25 @@ export function applyStandardGraphHudLayout(hudSystem) {
     );
   }
 
+  finishGraphHudLayout(hudSystem, { relayout });
+}
+
+/**
+ * Lay the graph HUD out again after the viewer changed size, unless the person has moved one of its windows (Halo
+ * marks a dragged window `userPlaced`). Keeps the log and each window's collapsed state.
+ * @param {object | null | undefined} hudSystem Shared HUD system.
+ * @returns {boolean} Whether the layout was applied.
+ */
+export function relayoutStandardGraphHud(hudSystem) {
+  const windows = hudSystem?.hud?.ui?.windows;
+  if (!windows || hudSystem?.renderer?.xr?.isPresenting) return false;
+  if (["chat", "debug", "selection"].some(key => windows[key]?.userPlaced)) return false;
+  applyStandardGraphHudLayout(hudSystem, { relayout: true });
+  return true;
+}
+
+function finishGraphHudLayout(hudSystem, { relayout = false } = {}) {
+  const edge = HUD_WINDOW_EDGE_MARGIN_PX;
   const help = hudSystem?.hud?.ui?.windows?.help;
   if (help) {
     // Do not un-hide help during layout; it must start not visible.
@@ -230,7 +281,10 @@ export function applyStandardGraphHudLayout(hudSystem) {
 
   // Prevent the HUD's default demo layout from re-positioning windows.
   hudSystem.hud.ui._layoutInitialized = true;
+  // This layout is the graph scene's: Halo's WebXR support check then places Enter VR only (Halo 0.3.7).
+  hudSystem.hud.ui._layoutByHalo = false;
 
+  if (relayout) return;
   // System log should start blank (the runtime HUD seeds demo chat lines).
   try {
     hudSystem.setWindowLines("chat", [], { scrollMode: "top" });

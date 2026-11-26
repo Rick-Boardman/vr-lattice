@@ -127,7 +127,7 @@ export function createXrRenderer({
  * @returns {() => void} Disposal function that removes the installed window resize listener.
  * Side effects: installs a window resize listener via the shared desktop-resize helper, mutates renderer size and camera projection on resize, and may invoke hudSystem.handleResize after each resize update.
  */
-export function wireDesktopResize({ renderer, camera, hudSystem }) {
+export function wireDesktopResize({ renderer, camera, hudSystem, afterResize = null }) {
   if (!renderer) throw new Error("wireDesktopResize: missing renderer");
   if (!camera) throw new Error("wireDesktopResize: missing camera");
 
@@ -158,6 +158,7 @@ export function wireDesktopResize({ renderer, camera, hudSystem }) {
       } catch {
         // no-op
       }
+      afterResize?.();
     },
   });
 }
