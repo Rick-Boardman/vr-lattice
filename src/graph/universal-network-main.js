@@ -537,7 +537,8 @@ export async function runUniversalNetworkScene(config) {
           // Only what the person is pointing at is exempt; a group label outranks a person's but still yields to a
           // nearer group label instead of printing over it.
           const keep = isActive;
-          if (reduceLabelOverlaps && (keep || dist <= LABEL_MAX_DISTANCE)) {
+          // Group labels show at any distance, so they always take part in the overlap check.
+          if (reduceLabelOverlaps && (keep || isGroup || dist <= LABEL_MAX_DISTANCE)) {
             const rect = projectNetworkLabel(spr,_labelSpritePos,_ctx.camera,labelWidth,labelHeight);
             if (rect) {
               _projectedNetworkLabels.push({label:spr,rect,depth:dist,
