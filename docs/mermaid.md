@@ -196,7 +196,10 @@ child geometry. The returned adapter does not expose all the editing and
 selection methods of the underlying card scene.
 
 The spherical preset has center `(0, 7.5, -6)`, radius `22`, yaw span `1.08π`,
-and pitch span `0.56π`, in diagram-local coordinates. The convenience function
+and pitch span `0.56π`, in diagram-local coordinates. The spans are the widest arcs the layout may use: the board
+keeps its proportions and true scale (a flat distance is the same arc around the viewer, so cards apart on the flat
+board stay apart), up stays up and right stays right as seen from the centre, and a graph larger than the spans sits
+farther out instead of being squeezed; `getSphereRadius()` reports the radius cards sit at. The convenience function
 does not accept a sphere-configuration argument. Camera placement for the
 spherical view belongs to the host; the flat framing example is only for flat
 mode. Use lower-level graph helpers when you need custom presentation or layout.

@@ -239,13 +239,33 @@ function resolveSphereBasis({ THREE, forward = null, up = null } = {}) {
   }
   resolvedForward.normalize();
 
-  const resolvedRight = new THREE.Vector3().crossVectors(resolvedUp, resolvedForward).normalize();
-  const orthonormalUp = new THREE.Vector3().crossVectors(resolvedForward, resolvedRight).normalize();
+  // The viewer's right when facing forward. It was up x forward, the viewer's left, so every headset board came out
+  // mirrored (and, with the vertical sign, turned 180 degrees from the desktop).
+  const resolvedRight = new THREE.Vector3().crossVectors(resolvedForward, resolvedUp).normalize();
+  const orthonormalUp = new THREE.Vector3().crossVectors(resolvedRight, resolvedForward).normalize();
   return {
     forward: resolvedForward,
     up: orthonormalUp,
     right: resolvedRight,
   };
+}
+
+/**
+ * The radius a sphere layout places cards at: the requested radius, or farther when the graph at true scale would not
+ * fit within the spans. At true scale a flat distance becomes the same arc length on the sphere, so cards that do not
+ * overlap on the flat board do not overlap around the viewer.
+ * @param {{ bounds: PlanarBounds, radius?: number, yawSpan?: number, pitchSpan?: number }} options
+ * @returns {number}
+ */
+export function resolveSphereLayoutRadius({ bounds, radius = DEFAULT_CARD_RADIUS, yawSpan = Math.PI * 1.1, pitchSpan = Math.PI * 0.62 } = {}) {
+  const width = Math.max(0, Number(bounds?.maxHorizontal) - Number(bounds?.minHorizontal)) || 0;
+  const height = Math.max(0, Number(bounds?.maxVertical) - Number(bounds?.minVertical)) || 0;
+  const safe = (span) => (Number.isFinite(span) && span > 1e-6 ? span : Math.PI);
+  let resolved = Math.max(Number(radius) || DEFAULT_CARD_RADIUS, height / safe(pitchSpan));
+  // Rows above and below the eye line have a smaller circle; their yaw widens so the row keeps its flat width.
+  const edgeCos = Math.cos(Math.min(Math.PI * 0.45, height / (2 * resolved)));
+  resolved = Math.max(resolved, width / (safe(yawSpan) * edgeCos));
+  return resolved;
 }
 
 /**
@@ -256,13 +276,16 @@ function resolveSphereBasis({ THREE, forward = null, up = null } = {}) {
  * @param {Map<string, any>} options.positions Planar node positions keyed by node id.
  * @param {any} [options.center] Sphere center.
  * @param {number} [options.radius=22] Sphere radius.
- * @param {number} [options.yawSpan=Math.PI * 1.1] Total yaw arc used across the planar X range.
- * @param {number} [options.pitchSpan=Math.PI * 0.62] Total pitch arc used across the planar Z range.
+ * @param {number} [options.yawSpan=Math.PI * 1.1] Widest yaw arc the layout may use.
+ * @param {number} [options.pitchSpan=Math.PI * 0.62] Tallest pitch arc the layout may use.
  * @param {any} [options.forward] Forward vector for the front-most point of the sphere layout.
  * @param {any} [options.up] Up vector used to keep node tops level across the sphere layout.
  * @param {"xy" | "xz" | string} [options.flatPlane="xz"] Flat board plane used to interpret the planar position map.
  * @param {PlanarBounds | null} [options.bounds] Optional precomputed planar bounds.
  * @returns {Map<string, any>} Spherical positions keyed by node id.
+ * The board keeps its proportions and true scale: a flat distance is the same arc on the sphere (vertically, and along
+ * each row), centred in front of the viewer, at `resolveSphereLayoutRadius`. It used to stretch the board's extent to
+ * the full spans on each axis independently, which squeezed tall graphs until neighbouring cards overlapped.
  * Side effects: none.
  */
 export function projectPlanarGraphPositionsToSphere({
@@ -287,17 +310,22 @@ export function projectPlanarGraphPositionsToSphere({
   const flatAxes = resolveFlatPlaneAxes(flatPlane);
   const resolvedBounds = bounds ?? computePlanarBounds(positions, flatAxes);
   const next = new Map();
+  const layoutRadius = resolveSphereLayoutRadius({ bounds: resolvedBounds, radius, yawSpan, pitchSpan });
+  const midHorizontal = (resolvedBounds.minHorizontal + resolvedBounds.maxHorizontal) * 0.5;
+  const midVertical = (resolvedBounds.minVertical + resolvedBounds.maxVertical) * 0.5;
+
+  // Up on the board is up around the viewer: on a standing (xy) board +y is up; on a board lying on the ground (xz) +z
+  // comes toward the viewer, which is down the screen. The xy case used to come out upside down.
+  const upSign = flatAxes.verticalAxis === "y" ? 1 : -1;
 
   for (const [id, pos] of positions.entries()) {
-    const u = normalizeRange(getAxisValue(pos, flatAxes.horizontalAxis), resolvedBounds.minHorizontal, resolvedBounds.maxHorizontal);
-    const v = normalizeRange(getAxisValue(pos, flatAxes.verticalAxis), resolvedBounds.minVertical, resolvedBounds.maxVertical);
-    const yaw = (u - 0.5) * yawSpan;
-    const pitch = (0.5 - v) * pitchSpan;
+    const pitch = upSign * (getAxisValue(pos, flatAxes.verticalAxis) - midVertical) / layoutRadius;
     const cosPitch = Math.cos(pitch);
+    const yaw = (getAxisValue(pos, flatAxes.horizontalAxis) - midHorizontal) / (layoutRadius * Math.max(1e-3, cosPitch));
     const spherePosition = resolvedCenter.clone();
-    spherePosition.addScaledVector(sphereBasis.right, Math.sin(yaw) * cosPitch * radius);
-    spherePosition.addScaledVector(sphereBasis.up, Math.sin(pitch) * radius);
-    spherePosition.addScaledVector(sphereBasis.forward, Math.cos(yaw) * cosPitch * radius);
+    spherePosition.addScaledVector(sphereBasis.right, Math.sin(yaw) * cosPitch * layoutRadius);
+    spherePosition.addScaledVector(sphereBasis.up, Math.sin(pitch) * layoutRadius);
+    spherePosition.addScaledVector(sphereBasis.forward, Math.cos(yaw) * cosPitch * layoutRadius);
     next.set(id, spherePosition);
   }
 
@@ -978,7 +1006,7 @@ export function createCardGraphScene({
     } else {
       if (currentLayoutMode === "sphere") {
         controlPoint.copy(worldStart).add(worldEnd).multiplyScalar(0.5);
-        controlPoint.sub(sphereOptions.center).normalize().multiplyScalar(sphereOptions.radius * 0.24).add(sphereOptions.center);
+        controlPoint.sub(sphereOptions.center).normalize().multiplyScalar(getLayoutSphereRadius() * 0.24).add(sphereOptions.center);
       } else {
         controlPoint.copy(worldStart).add(worldEnd).multiplyScalar(0.5);
         if (Number.isFinite(flatEdgeCurvePlaneOffset)) {
@@ -1418,6 +1446,15 @@ export function createCardGraphScene({
     syncHighlights();
   }
 
+  function getLayoutSphereRadius() {
+    return resolveSphereLayoutRadius({
+      bounds: sphereProjectionBounds,
+      radius: sphereOptions.radius,
+      yawSpan: sphereOptions.yawSpan,
+      pitchSpan: sphereOptions.pitchSpan,
+    });
+  }
+
   function rebuildSpherePositions() {
     spherePositions = projectPlanarGraphPositionsToSphere({
       THREE,
@@ -1649,12 +1686,14 @@ export function createCardGraphScene({
     setSphereCenter,
     getSphereCenter: (target = null) => target?.copy ? target.copy(sphereOptions.center) : sphereOptions.center.clone(),
     setSphereRadius,
-    getSphereRadius: () => sphereOptions.radius,
+    // The radius cards sit at (headset drag planes use it), which a large graph pushes past the requested one.
+    getSphereRadius: () => getLayoutSphereRadius(),
     setSphereBasis,
     getSphereBasis: () => ({
       forward: sphereOptions.forward.clone(),
       up: sphereOptions.up.clone(),
-      right: new THREE.Vector3().crossVectors(sphereOptions.up, sphereOptions.forward).normalize(),
+      // The viewer's right, as the layout uses it (a headset drag maps controller movement along it).
+      right: new THREE.Vector3().crossVectors(sphereOptions.forward, sphereOptions.up).normalize(),
     }),
     setLayoutMode,
     setAppearanceMode,
@@ -3608,11 +3647,6 @@ function writeEdgeCurvePoint(target, startPoint, endPoint, controlPoint, control
   target.addScaledVector(controlPoint, 2 * (1 - t) * t);
   target.addScaledVector(endPoint, t * t);
   return target;
-}
-
-function normalizeRange(value, min, max) {
-  if (!Number.isFinite(min) || !Number.isFinite(max) || Math.abs(max - min) < 1e-6) return 0.5;
-  return (Number(value) - min) / (max - min);
 }
 
 function toCssColor(hex) {

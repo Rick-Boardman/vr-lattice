@@ -97,6 +97,13 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
 AI-assisted contributions use the same licensing, testing, and review standards.
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
+## Test a card graph in a headset
+
+`@rb/lattice/testing/sphere-view.mjs` checks a card graph as a person in a headset sees it (with Halo's
+`@rb/halo/testing/emulated-headset.mjs` for the session): `viewerCardBoxes` gives each card's angular box from the
+viewer, `cardOverlaps` lists pairs that overlap, and `orientationAgreement` counts card pairs whose left/right and
+up/down match the desktop.
+
 ## Documentation
 
 - [Quick start](docs/quick-start.md)

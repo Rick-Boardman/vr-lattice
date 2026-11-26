@@ -48,6 +48,9 @@ ctx.scene.add(...edgeMeshes);
 const repaintLabels = (theme) => {
   for (const edge of edgeMeshes) edge.material.color.setHex(theme.key === "light" ? 0x567292 : 0xcbd5e1);
   for (const label of labels) label.userData.textMesh.color = theme.labelColor;
+  // The page behind the canvas wears the scene's colour, so a frame where the canvas is resizing never shows a
+  // different one (the fixed #0a0e27 showed through for a frame and failed the background check about 1 run in 6).
+  document.documentElement.style.background = document.body.style.background = `#${theme.background.toString(16).padStart(6, "0")}`;
 };
 repaintLabels(ctx.setPanelTheme(ctx.panelTheme));
 ctx.onPanelThemeChange(repaintLabels);
