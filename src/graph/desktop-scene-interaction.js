@@ -56,6 +56,19 @@ function ensureSceneEditorStyle(doc, nonce) {
   styledDocuments.add(doc);
 }
 
+let measureContext=null;
+/** Width of a field's text at a font size, in CSS pixels (the field's own font family). */
+function measureFieldText(field,fontPx) {
+  try {
+    measureContext ??= field.ownerDocument.createElement("canvas").getContext("2d");
+    const family=field.ownerDocument.defaultView?.getComputedStyle?.(field)?.fontFamily || "system-ui, sans-serif";
+    measureContext.font=`${fontPx}px ${family}`;
+    return measureContext.measureText(field.value || " ").width;
+  } catch {
+    return 0;
+  }
+}
+
 /** Position a browser text control over the authored pixels, not a HUD window. */
 export function createInlineSceneEditor({ host, project, getMode, onCommit, onEnd, styleNonce } = {}) {
   let edit = null;
@@ -86,15 +99,26 @@ export function createInlineSceneEditor({ host, project, getMode, onCommit, onEn
     const top = Math.max(viewport.top,Math.min(...points.map(p=>p.y)));
     const right = Math.min(viewport.right,Math.max(...points.map(p=>p.x)));
     const bottom = Math.min(viewport.bottom,Math.max(...points.map(p=>p.y)));
-    const width=right-left,height=bottom-top;
+    let width=right-left;const height=bottom-top;
     if (width<32 || height<(edit.multiline?54:14)) { end(); return false; }
     const style=edit.root.style;
-    const next=[left,top,width,height].map(n=>`${Math.round(n*100)/100}px`);
+    const font = Math.min(edit.multiline?19:23,Math.max(13,edit.multiline?width/18:height*0.59));
+    style.setProperty("--inline-scene-font",`${font}px`);
+    // A title on a small shape (a Mermaid parallelogram) is wider than its box at a readable size: widen the field
+    // about its centre to show the whole text while it is edited, within the viewer.
+    let x=left;
+    if (!edit.multiline) {
+      const need=Math.ceil(measureFieldText(edit.field,font))+14;
+      if (need>width) {
+        const grown=Math.min(need,viewport.width);
+        x=Math.min(Math.max(viewport.left,left-(grown-width)/2),viewport.right-grown);
+        width=grown;
+      }
+    }
+    const next=[x,top,width,height].map(n=>`${Math.round(n*100)/100}px`);
     if (next[0]!==style.left || next[1]!==style.top || next[2]!==style.width || next[3]!==style.height)
       [style.left,style.top,style.width,style.height]=next;
     edit.root.dataset.mode = getMode?.()==="light" ? "light" : "dark";
-    const font = Math.min(edit.multiline?19:23,Math.max(13,edit.multiline?width/18:height*0.59));
-    style.setProperty("--inline-scene-font",`${font}px`);
     return true;
   }
   function open(target,value) {
