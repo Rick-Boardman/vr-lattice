@@ -2,7 +2,11 @@
 const CELL = 64;
 const overlaps = (a,b) => a.left<b.right && a.right>b.left && a.top<b.bottom && a.bottom>b.top;
 
-export function retainNonoverlappingNetworkLabels(candidates, previous) {
+/**
+ * `obstacles`: projected node centres ({x, y, owner}). A person's label that would hide another node is dropped (its
+ * own node and protected labels excepted), so a dense cluster keeps its nodes readable.
+ */
+export function retainNonoverlappingNetworkLabels(candidates, previous, obstacles = []) {
   const visible = new Set();
   const grid = new Map();
   candidates.sort((a,b)=>b.priority-a.priority
@@ -17,6 +21,8 @@ export function retainNonoverlappingNetworkLabels(candidates, previous) {
     // Intentional protected labels remain discoverable even if two collide.
     // At a given priority, last frame's incumbents win to avoid flickering.
     if (!entry.protected && keys.some(key=>grid.get(key)?.some(other=>overlaps(box,other)))) continue;
+    if (!entry.protected && !entry.label.userData?.groupKey && obstacles.some(point => point.owner !== entry.label.userData?.nodeId &&
+      point.x > box.left && point.x < box.right && point.y > box.top && point.y < box.bottom)) continue;
     visible.add(entry.label);
     for (const key of keys) {
       if (!grid.has(key)) grid.set(key,[]);
