@@ -135,6 +135,7 @@ export { layoutClusteredGraphApplicationStyle } from "./application-style-layout
 export {
   createCardGraphScene,
   projectPlanarGraphPositionsToSphere,
+  resolveSphereLayoutRadius,
 } from "./card-graph-scene.js";
 
 /**
