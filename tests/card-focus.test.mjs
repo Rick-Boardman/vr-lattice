@@ -35,6 +35,10 @@ test("a focused card comes toward the sphere's center along its own direction an
   assert.ok(was.dot(now) > 0.999999, "same direction from the viewer");
   assert.equal(root.scale.x, 0.3);
   assert.deepEqual(controller.getNodeFocus("a"), { distance: 3.2, scale: 0.3 });
+  const body = controller.getNodeMeshById("a");
+  assert.equal(body.material.depthWrite, true, "a focused card writes depth so panels behind it stay hidden");
+  controller.setSelectedIds(["a"]);
+  assert.equal(body.material.depthWrite, true, "selected too");
 
   // A drag moves it around the sphere and it keeps its distance; an update does not put it back.
   controller.translateFlatPositions(["a"], new THREE.Vector3(1, 0, 0));
@@ -48,6 +52,7 @@ test("a focused card comes toward the sphere's center along its own direction an
   controller.setLayoutMode("sphere");
   assert.ok(Math.abs(root.position.distanceTo(center) - 3.2) < 1e-6);
 
+  controller.setSelectedIds([]);
   controller.setNodeFocus("a", null);
   assert.ok(Math.abs(root.position.distanceTo(center) - radius) < 0.5);
   assert.equal(root.scale.x, 1);

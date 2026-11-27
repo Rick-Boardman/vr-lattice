@@ -771,6 +771,10 @@ export function createCardGraphScene({
       scrollTo: fraction => { scroll.offset = Math.max(0, Math.min(1, fraction)) * scroll.max; paintBodyScroll(record); } };
   }
 
+  function isNodeFocused(nodeId) {
+    return currentLayoutMode === "sphere" && focusedNodes.has(String(nodeId ?? ""));
+  }
+
   function resolveLayoutPosition(nodeId) {
     if (currentLayoutMode !== "sphere") return flatPositions.get(nodeId) ?? new THREE.Vector3();
     const onSphere = spherePositions.get(nodeId) ?? flatPositions.get(nodeId) ?? new THREE.Vector3();
@@ -1317,9 +1321,11 @@ export function createCardGraphScene({
     const cardDepthTest = ignoreSceneDepth
       ? false
       : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthTest", true);
-    const cardDepthWrite = ignoreSceneDepth
+    // A card brought toward the viewer writes its depth, so anything drawn after it farther away (a headset's
+    // panels behind it) stays hidden behind it, even while it is selected and drawn over the other cards.
+    const cardDepthWrite = isNodeFocused(record.node?.id) || (ignoreSceneDepth
       ? false
-      : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true);
+      : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true));
     applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
     for (const item of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
       applyObjectDepthSettings(item, cardDepthTest, false);
@@ -1410,6 +1416,7 @@ export function createCardGraphScene({
       focusedNodes.set(id, { distance, scale });
     }
     updateNodePlacement(record);
+    applyNodeDepthPriority(record, selectedIds.has(id));
     for (const edgeRecord of edgeRecords) {
       if (edgeRecord.edge.fromId === id || edgeRecord.edge.toId === id) updateEdgePlacement(edgeRecord);
     }
@@ -1635,6 +1642,7 @@ export function createCardGraphScene({
     currentLayoutMode = resolvedMode;
     for (const record of nodeRecords.values()) {
       updateNodePlacement(record);
+      if (focusedNodes.has(record.node.id)) applyNodeDepthPriority(record, selectedIds.has(record.node.id));
     }
     for (const edgeRecord of edgeRecords) {
       updateEdgePlacement(edgeRecord);
