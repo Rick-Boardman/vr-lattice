@@ -2320,7 +2320,9 @@ function createPorts({ THREE, node, ports, side, anchorWidth, anchorHeight, port
     const color = asHexColor(getPortColor(port, { node, side }), 0xffffff);
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(portRadius, 12, 12),
-      new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: false }),
+      // Transparent at full opacity, like the action handles: three draws every opaque mesh before any
+      // transparent one, so an opaque dot would ignore its render order and fall under a raised card's HUD.
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthTest: true, depthWrite: false }),
     );
     mesh.position.set(x, y, 0.06);
     mesh.renderOrder = 3;
