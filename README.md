@@ -157,7 +157,10 @@ Reusable graph hosts can call `createGraphAuthoringAdapter` to map hit fields
 to host names and centralize canonical entity lookup, document identity checks,
 editor lifecycle, and saved-body picking. Provide `resolveField`, a canonical
 `resolveEdge`, host `allowWrite`/mode checks, and `writeField` for the existing
-mutation command. Use `createPassiveGraphInspector` with the same gesture and
+mutation command. A host whose HUD draws over the scene passes
+`getEditRenderOrder` (for example its HUD's render order + 1): the card being
+edited in place is drawn above the HUD until the edit ends (the scene's
+`setRaisedNode`). Use `createPassiveGraphInspector` with the same gesture and
 current-selection checks. `resolveGraphInspectorFrame` shares physical docking;
 choose explicitly whether the anchor itself should be avoided if no pointer
 coordinate is provided. Spherical anchors remain unclamped horizontally.

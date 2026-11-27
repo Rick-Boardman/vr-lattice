@@ -508,6 +508,8 @@ export function createCardGraphScene({
   let hoveredId = null;
   let currentLayoutMode = String(layoutMode || "flat");
   let nextNodeStackOrder = 0;
+  // One card can be lifted above everything else in the scene, a host's HUD included (an inline edit).
+  let raisedNode = null;
 
   const nodeRecords = new Map();
   const edgeRecords = [];
@@ -1280,6 +1282,7 @@ export function createCardGraphScene({
 
   function applyNodeDepthPriority(record, ignoreSceneDepth) {
     if (!record) return;
+    ignoreSceneDepth = ignoreSceneDepth || raisedNode?.id === String(record.node?.id ?? "");
 
     const shadowDepthTest = ignoreSceneDepth
       ? false
@@ -1332,7 +1335,8 @@ export function createCardGraphScene({
 
   function applyNodeStackOrder(record) {
     if (!record) return;
-    const renderBase = Math.max(0, Number(record.stackOrder) || 0) * NODE_STACK_RENDER_ORDER_STEP;
+    const raised = raisedNode?.id === String(record.node?.id ?? "");
+    const renderBase = raised ? raisedNode.renderOrder : Math.max(0, Number(record.stackOrder) || 0) * NODE_STACK_RENDER_ORDER_STEP;
     record.root.renderOrder = renderBase;
     record.textRoot.renderOrder = renderBase;
     record.shadowMesh.renderOrder = renderBase + 1;
@@ -1372,6 +1376,24 @@ export function createCardGraphScene({
       record.stackOrder = nextNodeStackOrder;
       nextNodeStackOrder += 1;
       applyNodeStackOrder(record);
+    }
+  }
+
+  /**
+   * Draw one node's card at `renderOrder` without depth testing, so it shows above every object with a lower render
+   * order (a host passes its HUD's, for example while the card is edited in place). `null` puts it back in the stack.
+   */
+  function setRaisedNode(nodeId, renderOrder = null) {
+    const id = nodeId == null ? null : String(nodeId);
+    if (id != null && !Number.isFinite(renderOrder)) {
+      throw new Error(`card-graph-scene: setRaisedNode needs a finite renderOrder (got ${renderOrder})`);
+    }
+    const previous = raisedNode ? nodeRecords.get(raisedNode.id) : null;
+    raisedNode = id == null ? null : { id, renderOrder };
+    for (const record of new Set([previous, id == null ? null : nodeRecords.get(id)])) {
+      if (!record) continue;
+      applyNodeStackOrder(record);
+      applyNodeDepthPriority(record, selectedIds.has(record.node.id));
     }
   }
 
@@ -1676,6 +1698,8 @@ export function createCardGraphScene({
     getBodyOverflowTarget,
     getBodyScrollTarget,
     bringNodeIdsToFront,
+    setRaisedNode,
+    getRaisedNodeId: () => raisedNode?.id ?? null,
     setSelectedIds,
     setSelectedEdgeKey,
     setHoveredId,
