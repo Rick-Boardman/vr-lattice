@@ -9,7 +9,10 @@ export function createGraphAuthoringAdapter({
   resolveField, resolveEdge, getEdgeKey, allowWrite = () => true,
   canPick = () => true, canOpen = canPick, canResolve = () => true,
   canReadSaved = () => true, writeField, onOpen,
+  // The render order a card takes while it is edited in place, above the host's HUD; null leaves it where it is.
+  getEditRenderOrder = () => null,
 } = {}) {
+  let raisedScene = null;
   function resolve(target) {
     const doc = getDocument?.();
     if (!target || !doc || target.document !== doc || !canResolve(target)) return null;
@@ -23,6 +26,10 @@ export function createGraphAuthoringAdapter({
     onCommit(target, value) {
       const entry = resolve(target);
       if (entry) writeField?.({ target, entry, value });
+    },
+    onEnd() {
+      raisedScene?.setRaisedNode(null);
+      raisedScene = null;
     },
   });
   return {
@@ -48,6 +55,16 @@ export function createGraphAuthoringAdapter({
       if (!canOpen(target)) return false;
       const entry = resolve(target);
       if (!entry || !editor.open(target,entry[target.rowKey])) return false;
+      const raise = target.kind === "node" ? getEditRenderOrder?.() : null;
+      if (raise != null) {
+        const scene = getScene?.();
+        if (typeof scene?.setRaisedNode !== "function") {
+          editor.cancel();
+          throw new Error("graph authoring: getEditRenderOrder needs a scene with setRaisedNode");
+        }
+        scene.setRaisedNode(target.id, raise);
+        raisedScene = scene;
+      }
       onOpen?.({target,entry});
       return true;
     },
