@@ -160,7 +160,10 @@ editor lifecycle, and saved-body picking. Provide `resolveField`, a canonical
 mutation command. A host whose HUD draws over the scene passes
 `getEditRenderOrder` (for example its HUD's render order + 1): the card being
 edited in place is drawn above the HUD until the edit ends (the scene's
-`setRaisedNode`). Use `createPassiveGraphInspector` with the same gesture and
+`setRaisedNode`, source `edit`). A host can also place a card among its HUD
+windows with `setRaisedNode(id, renderOrder, { groupOrder, source })`: the
+card's groups take `groupOrder` and its meshes order from `renderOrder`; each
+source holds one raise and the highest wins. Use `createPassiveGraphInspector` with the same gesture and
 current-selection checks. `resolveGraphInspectorFrame` shares physical docking;
 choose explicitly whether the anchor itself should be avoided if no pointer
 coordinate is provided. Spherical anchors remain unclamped horizontally.

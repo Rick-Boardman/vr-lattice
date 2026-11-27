@@ -71,7 +71,7 @@ test("a card edited in place is raised to the host's render order and put back w
   const host={ownerDocument:doc,getBoundingClientRect:()=>({left:0,top:0,right:800,bottom:600,width:800,height:600}),focus(){}};
   const node={id:"a",notes:"n"},doc0={graph:{nodes:[node],edges:[]}};
   const raised=[];
-  const scene={setRaisedNode:(id,order=null)=>raised.push([id,order])};
+  const scene={setRaisedNode:(id,order=null,{source}={})=>raised.push([id,order,source])};
   const mesh={parent:{}};
   const adapter=createGraphAuthoringAdapter({
     host,project:(_m,p)=>({x:100+p.x*20,y:100-p.y*20}),getScene:()=>scene,getDocument:()=>doc0,
@@ -79,9 +79,9 @@ test("a card edited in place is raised to the host's render order and put back w
   });
   const target={kind:"node",id:"a",rowKey:"notes",document:doc0,surface:{mesh,localBounds:{left:0,right:10,top:10,bottom:0}}};
   assert.equal(adapter.open(target),true);
-  assert.deepEqual(raised,[["a",10001]]);
+  assert.deepEqual(raised,[["a",10001,"edit"]]);
   adapter.editor.cancel();
-  assert.deepEqual(raised,[["a",10001],[null,null]]);
+  assert.deepEqual(raised,[["a",10001,"edit"],[null,null,"edit"]]);
   const bare=createGraphAuthoringAdapter({host,project:(_m,p)=>({x:100+p.x*20,y:100-p.y*20}),getScene:()=>({}),
     getDocument:()=>doc0,getEditRenderOrder:()=>10001});
   assert.throws(()=>bare.open(target),/setRaisedNode/);
