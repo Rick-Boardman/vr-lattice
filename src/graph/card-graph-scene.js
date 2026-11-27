@@ -374,7 +374,7 @@ export function projectPlanarGraphPositionsToSphere({
  * @param {(edge: object) => string} [options.getEdgeSelectionKey] Edge-selection key accessor used by setSelectedEdgeKey.
  * @param {boolean} [options.enableSavedBodyScroll] Render a scrollbar for overflowing authored card bodies and expose an input target via getBodyScrollTarget.
  * @param {CardGraphSceneSphereOptions} [options.sphere] Sphere-layout overrides.
- * @returns {{ root: any, graph: { nodes: Array<object>, edges: Array<object> }, nodeHitTargets: Array<any>, portHitTargets: Array<any>, edgeHitTargets: Array<any>, actionHandleHitTargets: Array<any>, getNodeIds: () => Array<string>, getNodeById: (nodeId: string) => object | null, getNodeMeshById: (nodeId: string) => any, setSelectedIds: (nextIds: Array<string> | Set<string> | null | undefined) => void, setSelectedEdgeKey: (nextKey: string | null | undefined) => void, setHoveredId: (nextId: string | null | undefined) => void, getFlatBounds: (targetBox?: any) => any, getNodeFlatPosition: (nodeId: string) => any, translateFlatPositions: (nodeIds: Array<string> | Set<string>, delta: any) => void, setLayoutMode: (nextMode: string) => void, getLayoutMode: () => string, syncNode: (nodeId: string | null | undefined) => void, update: (dt?: number) => void, dispose: () => void }} Shared graph-scene controller.
+ * @returns {{ root: any, graph: { nodes: Array<object>, edges: Array<object> }, nodeHitTargets: Array<any>, portHitTargets: Array<any>, edgeHitTargets: Array<any>, actionHandleHitTargets: Array<any>, getNodeIds: () => Array<string>, getNodeById: (nodeId: string) => object | null, getNodeMeshById: (nodeId: string) => any, setSelectedIds: (nextIds: Array<string> | Set<string> | null | undefined) => void, setSelectedEdgeKey: (nextKey: string | null | undefined) => void, setHoveredId: (nextId: string | null | undefined) => void, getFlatBounds: (targetBox?: any) => any, getNodeFlatPosition: (nodeId: string) => any, translateFlatPositions: (nodeIds: Array<string> | Set<string>, delta: any) => void, setNodeFocus: (nodeId: string, focus: { distance: number, scale?: number } | null) => void, getNodeFocus: (nodeId: string) => { distance: number, scale: number } | null, setLayoutMode: (nextMode: string) => void, getLayoutMode: () => string, syncNode: (nodeId: string | null | undefined) => void, update: (dt?: number) => void, dispose: () => void }} Shared graph-scene controller.
  * Side effects: allocates card textures, card/port/edge meshes, adds the root group to the supplied scene parent, mutates geometry when nodes move, and disposes all created resources when torn down.
  */
 export function createCardGraphScene({
@@ -510,6 +510,10 @@ export function createCardGraphScene({
   let nextNodeStackOrder = 0;
   // Cards lifted out of the scene's stack, one per source (an inline edit, a host's window stack), by source name.
   const raisedNodes = new Map();
+  // Cards brought toward the viewer in the sphere layout: id -> { distance, scale }. They stay there until
+  // cleared, through selection changes and drags (a drag moves them around the sphere at their own distance).
+  const focusedNodes = new Map();
+  const focusDirection = new THREE.Vector3();
   /** The raise that wins for a node: the highest group, then the highest render order. */
   function raiseFor(nodeId) {
     const id = String(nodeId ?? "");
@@ -767,15 +771,26 @@ export function createCardGraphScene({
       scrollTo: fraction => { scroll.offset = Math.max(0, Math.min(1, fraction)) * scroll.max; paintBodyScroll(record); } };
   }
 
+  function isNodeFocused(nodeId) {
+    return currentLayoutMode === "sphere" && focusedNodes.has(String(nodeId ?? ""));
+  }
+
   function resolveLayoutPosition(nodeId) {
-    return currentLayoutMode === "sphere"
-      ? spherePositions.get(nodeId) ?? flatPositions.get(nodeId) ?? new THREE.Vector3()
-      : flatPositions.get(nodeId) ?? new THREE.Vector3();
+    if (currentLayoutMode !== "sphere") return flatPositions.get(nodeId) ?? new THREE.Vector3();
+    const onSphere = spherePositions.get(nodeId) ?? flatPositions.get(nodeId) ?? new THREE.Vector3();
+    const focus = focusedNodes.get(nodeId);
+    if (!focus) return onSphere;
+    // Same direction from the sphere's center (where the viewer stands), nearer.
+    focusDirection.copy(onSphere).sub(sphereOptions.center);
+    if (focusDirection.lengthSq() < 1e-12) return onSphere;
+    return focusDirection.setLength(focus.distance).add(sphereOptions.center);
   }
 
   function updateNodePlacement(record) {
     const position = resolveLayoutPosition(record.node.id);
     record.root.position.copy(position);
+    const focus = currentLayoutMode === "sphere" ? focusedNodes.get(record.node.id) : null;
+    record.root.scale.setScalar(focus ? focus.scale : 1);
 
     if (currentLayoutMode === "sphere") {
       record.root.up.copy(sphereOptions.up);
@@ -1284,6 +1299,11 @@ export function createCardGraphScene({
     }
   }
 
+  function setObjectDepthFunc(object3d, depthFunc) {
+    const materials = Array.isArray(object3d?.material) ? object3d.material : [object3d?.material];
+    for (const material of materials) if (material) material.depthFunc = depthFunc;
+  }
+
   function resolveObjectDepthSetting(object3d, key, fallback) {
     if (typeof object3d?.userData?.[key] === "boolean") {
       return object3d.userData[key];
@@ -1309,7 +1329,16 @@ export function createCardGraphScene({
     const cardDepthWrite = ignoreSceneDepth
       ? false
       : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true);
-    applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
+    if (isNodeFocused(record.node?.id)) {
+      // A card brought toward the viewer writes its depth, so anything drawn after it farther away (a headset's
+      // panels behind it) stays hidden behind it. WebGL writes no depth while the depth test is off, so a card
+      // drawn over the scene (selected) tests with a comparison that always passes instead.
+      applyObjectDepthSettings(record.cardMesh, true, true);
+      setObjectDepthFunc(record.cardMesh, cardDepthTest ? THREE.LessEqualDepth : THREE.AlwaysDepth);
+    } else {
+      applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
+      setObjectDepthFunc(record.cardMesh, THREE.LessEqualDepth);
+    }
     for (const item of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
       applyObjectDepthSettings(item, cardDepthTest, false);
     }
@@ -1377,6 +1406,31 @@ export function createCardGraphScene({
       if (!handle?.mesh) continue;
       const baseRenderOrder = Number(handle.mesh.userData?.graphBaseRenderOrder);
       handle.mesh.renderOrder = renderBase + (Number.isFinite(baseRenderOrder) ? baseRenderOrder : 3);
+    }
+  }
+
+  /**
+   * Bring a card toward the viewer in the sphere layout and keep it there: same direction from the sphere's
+   * center, at `distance`, drawn at `scale`. `null` puts it back on the sphere. The flat layout ignores it.
+   */
+  function setNodeFocus(nodeId, focus = null) {
+    const id = String(nodeId ?? "");
+    const record = nodeRecords.get(id);
+    if (!record) throw new Error(`card graph scene: setNodeFocus has no card ${JSON.stringify(id)}`);
+    if (focus == null) {
+      focusedNodes.delete(id);
+    } else {
+      const distance = Number(focus.distance);
+      const scale = focus.scale == null ? 1 : Number(focus.scale);
+      if (!(distance > 0) || !(scale > 0)) {
+        throw new Error(`card graph scene: setNodeFocus needs a positive distance and scale (got ${focus.distance}, ${focus.scale})`);
+      }
+      focusedNodes.set(id, { distance, scale });
+    }
+    updateNodePlacement(record);
+    applyNodeDepthPriority(record, selectedIds.has(id));
+    for (const edgeRecord of edgeRecords) {
+      if (edgeRecord.edge.fromId === id || edgeRecord.edge.toId === id) updateEdgePlacement(edgeRecord);
     }
   }
 
@@ -1600,6 +1654,7 @@ export function createCardGraphScene({
     currentLayoutMode = resolvedMode;
     for (const record of nodeRecords.values()) {
       updateNodePlacement(record);
+      if (focusedNodes.has(record.node.id)) applyNodeDepthPriority(record, selectedIds.has(record.node.id));
     }
     for (const edgeRecord of edgeRecords) {
       updateEdgePlacement(edgeRecord);
@@ -1716,6 +1771,11 @@ export function createCardGraphScene({
     getBodyScrollTarget,
     bringNodeIdsToFront,
     setRaisedNode,
+    setNodeFocus,
+    getNodeFocus: (nodeId) => {
+      const focus = focusedNodes.get(String(nodeId ?? ""));
+      return focus ? { ...focus } : null;
+    },
     getRaisedNodeId: (source = "default") => raisedNodes.get(String(source))?.id ?? null,
     setSelectedIds,
     setSelectedEdgeKey,

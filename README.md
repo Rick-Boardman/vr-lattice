@@ -163,7 +163,11 @@ edited in place is drawn above the HUD until the edit ends (the scene's
 `setRaisedNode`, source `edit`). A host can also place a card among its HUD
 windows with `setRaisedNode(id, renderOrder, { groupOrder, source })`: the
 card's groups take `groupOrder` and its meshes order from `renderOrder`; each
-source holds one raise and the highest wins. Use `createPassiveGraphInspector` with the same gesture and
+source holds one raise and the highest wins. In the sphere layout (a headset),
+`setNodeFocus(id, { distance, scale })` brings a card toward the sphere's center
+along its own direction and keeps it there, drags included, until
+`setNodeFocus(id, null)`; `getNodeFocus(id)` reads it and the flat layout ignores it.
+Use `createPassiveGraphInspector` with the same gesture and
 current-selection checks. `resolveGraphInspectorFrame` shares physical docking;
 choose explicitly whether the anchor itself should be avoided if no pointer
 coordinate is provided. Spherical anchors remain unclamped horizontally.
