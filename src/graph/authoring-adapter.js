@@ -28,7 +28,7 @@ export function createGraphAuthoringAdapter({
       if (entry) writeField?.({ target, entry, value });
     },
     onEnd() {
-      raisedScene?.setRaisedNode(null);
+      raisedScene?.setRaisedNode(null, null, { source: "edit" });
       raisedScene = null;
     },
   });
@@ -62,7 +62,7 @@ export function createGraphAuthoringAdapter({
           editor.cancel();
           throw new Error("graph authoring: getEditRenderOrder needs a scene with setRaisedNode");
         }
-        scene.setRaisedNode(target.id, raise);
+        scene.setRaisedNode(target.id, raise, { source: "edit" });
         raisedScene = scene;
       }
       onOpen?.({target,entry});
