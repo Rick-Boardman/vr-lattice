@@ -1299,6 +1299,11 @@ export function createCardGraphScene({
     }
   }
 
+  function setObjectDepthFunc(object3d, depthFunc) {
+    const materials = Array.isArray(object3d?.material) ? object3d.material : [object3d?.material];
+    for (const material of materials) if (material) material.depthFunc = depthFunc;
+  }
+
   function resolveObjectDepthSetting(object3d, key, fallback) {
     if (typeof object3d?.userData?.[key] === "boolean") {
       return object3d.userData[key];
@@ -1321,12 +1326,19 @@ export function createCardGraphScene({
     const cardDepthTest = ignoreSceneDepth
       ? false
       : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthTest", true);
-    // A card brought toward the viewer writes its depth, so anything drawn after it farther away (a headset's
-    // panels behind it) stays hidden behind it, even while it is selected and drawn over the other cards.
-    const cardDepthWrite = isNodeFocused(record.node?.id) || (ignoreSceneDepth
+    const cardDepthWrite = ignoreSceneDepth
       ? false
-      : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true));
-    applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
+      : resolveObjectDepthSetting(record.cardMesh, "graphBaseDepthWrite", true);
+    if (isNodeFocused(record.node?.id)) {
+      // A card brought toward the viewer writes its depth, so anything drawn after it farther away (a headset's
+      // panels behind it) stays hidden behind it. WebGL writes no depth while the depth test is off, so a card
+      // drawn over the scene (selected) tests with a comparison that always passes instead.
+      applyObjectDepthSettings(record.cardMesh, true, true);
+      setObjectDepthFunc(record.cardMesh, cardDepthTest ? THREE.LessEqualDepth : THREE.AlwaysDepth);
+    } else {
+      applyObjectDepthSettings(record.cardMesh, cardDepthTest, cardDepthWrite);
+      setObjectDepthFunc(record.cardMesh, THREE.LessEqualDepth);
+    }
     for (const item of [record.bodyScroll?.track, record.bodyScroll?.thumb]) {
       applyObjectDepthSettings(item, cardDepthTest, false);
     }

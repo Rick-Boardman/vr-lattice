@@ -36,9 +36,10 @@ test("a focused card comes toward the sphere's center along its own direction an
   assert.equal(root.scale.x, 0.3);
   assert.deepEqual(controller.getNodeFocus("a"), { distance: 3.2, scale: 0.3 });
   const body = controller.getNodeMeshById("a");
-  assert.equal(body.material.depthWrite, true, "a focused card writes depth so panels behind it stay hidden");
+  // WebGL writes depth only while the depth test is on: a focused card tests (always passing when selected) and writes.
+  assert.deepEqual([body.material.depthTest, body.material.depthWrite, body.material.depthFunc], [true, true, THREE.LessEqualDepth]);
   controller.setSelectedIds(["a"]);
-  assert.equal(body.material.depthWrite, true, "selected too");
+  assert.deepEqual([body.material.depthTest, body.material.depthWrite, body.material.depthFunc], [true, true, THREE.AlwaysDepth], "selected: drawn over the scene, still writing depth");
 
   // A drag moves it around the sphere and it keeps its distance; an update does not put it back.
   controller.translateFlatPositions(["a"], new THREE.Vector3(1, 0, 0));
@@ -54,6 +55,7 @@ test("a focused card comes toward the sphere's center along its own direction an
 
   controller.setSelectedIds([]);
   controller.setNodeFocus("a", null);
+  assert.equal(body.material.depthFunc, THREE.LessEqualDepth);
   assert.ok(Math.abs(root.position.distanceTo(center) - radius) < 0.5);
   assert.equal(root.scale.x, 1);
   assert.equal(controller.getNodeFocus("a"), null);
